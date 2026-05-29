@@ -44,12 +44,12 @@ end
     end
     F = randn(r, n)
 
-    Aadded = SparseWithDenseRowColMatrix(S, F; replace = false)
-    @test Aadded.U isa SelectorMatrix
-    @test fillpart(Aadded) == F
+    A_add = SparseWithDenseRowColMatrix(S, F; replace = false)
+    @test A_add.U isa SelectorMatrix
+    @test fillpart(A_add) == F
     Madd = Matrix(S)
     Madd[1:r, :] .+= F
-    @test Matrix(Aadded) ≈ Madd
+    @test Matrix(A_add) ≈ Madd
 
     Arep = SparseWithDenseRowColMatrix(S, F; replace = true)
     Mrep = Matrix(S)
