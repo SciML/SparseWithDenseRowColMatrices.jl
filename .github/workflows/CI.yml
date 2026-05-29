@@ -1,0 +1,38 @@
+name: CI
+on:
+  push:
+    branches:
+      - main
+    tags: ['*']
+  pull_request:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  test:
+    name: Julia ${{ matrix.version }} - ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        version:
+          - '1.10'
+          - '1.11'
+          - '1'
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: ${{ matrix.version }}
+      - uses: julia-actions/cache@v2
+      # PureKLU is not yet registered in General; develop it from the SciML repo so the
+      # dependency resolves on every Julia version (`[sources]` in Project.toml covers 1.11+,
+      # but this keeps 1.10 green too). Remove once PureKLU is registered.
+      - name: Develop unregistered PureKLU dependency
+        run: julia --color=yes --project=. -e 'using Pkg; Pkg.develop(url="https://github.com/SciML/PureKLU.jl")'
+      - uses: julia-actions/julia-buildpkg@v1
+      - uses: julia-actions/julia-runtest@v1
