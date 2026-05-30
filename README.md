@@ -108,30 +108,30 @@ The `refactor!` + `\` loop is allocation-free apart from the tiny `O(r)` dense p
 
 ## Benchmarks
 
-A realistic BVP/PDE-style system: a banded sparse interior (`bw = 2`) plus `r = 4` dense
-boundary rows. Factoring `S` with PureKLU and applying the rank-`r` Woodbury correction
-avoids both the `O(n³)` dense cost and the fill-in that the dense rows inflict on a
-general sparse `LU`. The cached solve and the symbolic-reuse `refactor!` (the Newton path)
-are sub-millisecond. (`SWDRC` below = this package.)
+A banded sparse interior plus `r = 8` dense rows (`n = 5000`). Factoring only `S` and
+applying the rank-`r` Woodbury correction never assembles the dense rows into the
+factorization, so it avoids the `O(n³)` dense cost and the fill those rows inflict on a
+direct sparse `LU`. The honest baseline is **KLU** (PureKLU): its BTF + AMD ordering
+*isolates* a few dense rows, so it handles the assembled matrix well — UMFPACK's COLAMD does
+**not** (it fills), and dense `LU` is `O(n³)`.
 
 ```
-n = 5000, r = 4   (nnz(S) = 24994,  solve rel err vs dense ≈ 1e-12)
-  SWDRC         factorize + solve :   4.85 ms
-  dense  lu + solve               : 807.67 ms     (166× slower)
-  SuiteSparse lu on sparse(A)      :  24.71 ms     (5× slower; dense rows fill in)
-  SWDRC         ldiv!  (cached)    :   0.27 ms
-  SWDRC         refactor! (Newton) :   0.68 ms     (7× faster than re-factorizing)
+n = 5000, r = 8   (factor + solve, solve rel err vs dense ≈ 1e-14)
+  SWDRC (Woodbury)                 :   2.9 ms     ← this package
+  KLU on the assembled S + U·V     :   4.9 ms     (1.7× slower; the right sparse baseline)
+  UMFPACK lu on the assembled      : 345   ms     (~120×; COLAMD fills on the dense rows)
+  dense lu                         : 820   ms     (~280×; O(n³))
 
-n = 10000, r = 4
-  SWDRC         factorize + solve :   9.45 ms
-  dense  lu + solve               : 3160.7 ms      (334× slower)
-  SuiteSparse lu on sparse(A)      :  79.69 ms      (8× slower)
-  SWDRC         refactor! (Newton) :   1.36 ms
+  fixed S, changing low-rank correction — reuse, per solve:
+  SWDRC  update_lowrank!           :   1.0 ms     ← reuses S's factorization
+  KLU    klu! (refactor assembled) :   3.0 ms     (2.9× slower)
 ```
 
-(`julia -O2`, single thread; `@elapsed` best-of-30. The advantage holds whenever `S` has
-good sparse structure — banded, local, or low-fill; for a globally-scattered `S` with no
-good ordering, any sparse `LU` degrades and dense `lu` may win.)
+(`julia -O2`, single thread, `@elapsed` best-of. The win over **KLU** is modest at small
+`r` (~1.5–3×) and grows with the border width `r` — KLU fills more as you add dense rows,
+while the Woodbury correction stays `r×r`. The win over UMFPACK/dense is large because both
+fill or scale as `O(n³)`. `S` must have good sparse structure for any of this to help; a
+globally-scattered `S` degrades every sparse method.)
 
 ## What is fast
 
@@ -176,7 +176,7 @@ symbolic analysis** (no re-analysis):
 F = lu(A)                     # analyze (cache symbolic) + numeric factor
 x1 = F \ b1; x2 = F \ b2      # reuse for multiple solves
 for step in 1:maxiters
-    lu!(F, A_new)             # new values, same pattern → reuses cached symbolic (≈7× faster than re-`lu`)
+    lu!(F, A_new)             # new values, same pattern → reuses cached symbolic analysis (no re-analysis)
     Δ = F \ residual
 end
 ```
@@ -189,9 +189,9 @@ once + `klu!`/`solve!` per step.
 The structure pays off most in the classic Sherman–Morrison–Woodbury setting: a **fixed**
 sparse base `S`, factored once, solved repeatedly under a **changing low-rank correction**
 `U·V` — varying boundary conditions / coupling, adding or removing a constraint, sensitivity
-or parameter sweeps, KKT / saddle-point systems with changing borders. Here the dense rows
-or columns are exactly what make a direct sparse `LU` of the assembled `S + U·V` fill in
-catastrophically; Woodbury sidesteps them by keeping only `S` factored.
+or parameter sweeps, KKT / saddle-point systems with changing borders. Reusing `S`'s
+factorization across the updates is the win: re-factoring the whole assembled `S + U·V`
+each step redoes work that doesn't change.
 
 [`update_lowrank!`](@ref) updates the low-rank factors while **reusing `S`'s cached
 factorization** (no re-factorization of `S`, and `Z = S⁻¹U` is recomputed only if `U`
@@ -205,16 +205,18 @@ for step in 1:maxiters
 end
 ```
 
-Measured (`n = 20000`, `r = 8` dense rows, 25 solves, `S` fixed):
+Measured (`n = 5000`, `r = 8`, `S` fixed, per solve):
 
 ```
-  Woodbury reuse via update_lowrank!  :   ~2.7 ms / solve
-  refactor! (re-factors S each step)  :   ~7.3 ms / solve   (wastes the S re-factorization)
-  re-KLU the assembled S + U·V         : ~1740   ms / solve   (~650× slower — dense rows fill)
+  update_lowrank!  (reuse S's factorization)   :  1.0 ms / solve
+  refactor!        (re-factors S each step)    :  ~3   ms / solve   (wastes the S re-factorization)
+  KLU klu! on the refactored assembled S + U·V :  3.0 ms / solve   (~3× slower; grows with r)
 ```
 
-Use `update_lowrank!` when only the low-rank part changes, `refactor!` when `S`'s values
-change (Newton), and `factorize` to (re)analyze a new pattern.
+The advantage over KLU is modest at small `r` and grows with the border width — KLU must
+refactor the dense rows every step, while `update_lowrank!` touches only the `r×r`
+correction. Use `update_lowrank!` when only the low-rank part changes, `refactor!` when
+`S`'s values change (Newton), and `factorize` to (re)analyze a new pattern.
 
 ## LinearSolve.jl integration
 
