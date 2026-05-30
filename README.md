@@ -106,6 +106,62 @@ The `refactor!` + `\` loop is allocation-free apart from the tiny `O(r)` dense p
 * **`:auto`** (default) — Woodbury, automatically falling back to the augmented system if
   `S` is singular or `C` is ill-conditioned.
 
+### QR (the numerically stable path)
+
+`qr(A; strategy=:augmented)` factors the bordered system `[S U; V -I]` with **SuiteSparseQR**
+(the stdlib sparse `qr`), returning a `SparseWithDenseRowColQRAugmented`. Like the augmented
+LU path it never forms `S⁻¹`, so it stays accurate when the sparse part `S` is ill-conditioned
+or nearly singular but the dense rows regularize `A` — the
+[FastAlmostBandedMatrices](https://github.com/SciML/FastAlmostBandedMatrices.jl) regime, where
+QR is the conventional choice. Measured forward error on `A = S + U V` with `κ(A) ≈ 6` as
+`κ(S)` sweeps from `3.6e6` to `3.6e14` (reference: BigFloat dense solve):
+
+```
+  κ(S)          qr (augmented)   factorize :woodbury, refine=2   factorize :augmented (LU)
+  3.6e6   …   3.1e-16 (flat)        8.7e-17  →  4.5e-7              1.2e-16 (flat)
+  3.6e14
+```
+
+The Woodbury path's error grows with `κ(S)·κ(C)`; here (where the *assembled* `A` stays
+well-conditioned, `κ(A) ≈ 6`) both augmented paths hold at the noise floor.
+
+**Be clear about what QR does and does not buy you.** Augmented QR is *not* more accurate than
+the augmented **LU** path. It is backward-stable, so its forward error tracks `κ(A)·eps`; when
+the *assembled* `A` is itself ill-conditioned the augmented-LU path's partial pivoting can be
+**more** accurate on these structured matrices (measured: LU near the noise floor where QR sits
+at `κ(A)·eps`, orders apart for `κ(A) ≳ 1e6`). QR's genuine, distinct properties versus
+augmented-LU are that it is **rank-revealing** (a clean numerical-rank/singularity signal) and
+that it is the QR-based interface users of almost-banded solvers expect — not higher accuracy,
+which the LU path already delivers, and not throughput (it is slower; see the trade-offs
+below). Reach for `qr` when you specifically want a QR factorization or its rank diagnostics;
+otherwise `factorize`/`lu` is the better default.
+
+There is **no** `strategy=:woodbury` for `qr`: a Woodbury-over-`qr(S)` solve shares the same
+`κ(S)·κ(C)` cancellation and is catastrophically inaccurate on ill-conditioned `S` (~`1e-1`),
+so it is deliberately not offered. `qr` throws `SingularException` when the bordered system is
+numerically rank-deficient (`κ ≳ 1/(m·eps)`); a merely ill-conditioned, accurately-solvable `A`
+is **not** rejected (SuiteSparseQR's aggressive default column deflation is disabled).
+
+Trade-offs relative to `factorize`/`lu`: QR supports **only** `Float64`/`ComplexF64`
+(SuiteSparseQR's single-precision sparse QR is version-dependent — it throws on Julia 1.11 — so
+`Float32`/`ComplexF32` route to the LU path), has **no** symbolic-reuse `refactor!`
+(SuiteSparseQR exposes no `qr!`, so it re-factors fully), and **allocates** per solve (no
+in-place `ldiv!`). It is the stability path, not the throughput path — for `Float32`/generic
+eltypes or hot Newton refactor loops use `factorize`/`lu`. The cost is real and consistent
+(banded interior + `r` dense rows, factor / solve / refactor, ms):
+
+```
+  n=2000 r=4                          n=5000 r=8
+  qr  (augmented QR) : 67 / 7.5 / 90    813 / 156 / 776     ← stability path, slowest
+  lu  (augmented LU) : 47 / 1.7 / 21    633 /  11 / 188     ← klu! symbolic reuse on refactor
+  lu  (Woodbury)     : 1.3/ 0.1 / n/a   3.6 / 0.3 / n/a     ← fast path (forms S⁻¹), ~50–60×
+```
+
+QR is slower than the augmented-LU path on every axis (≈1.4× factor, ≈4–14× solve, ≈4×
+refactor since it has no symbolic reuse) and far slower than the Woodbury fast path; forward
+error is comparable (~`1e-13`) for all three on a well-conditioned `A`. Use `qr` for the
+factorization/rank-revealing semantics, not for speed.
+
 ## Benchmarks
 
 A banded sparse interior plus `r = 8` dense rows (`n = 5000`). Factoring only `S` and
@@ -139,10 +195,12 @@ globally-scattered `S` degrades every sparse method.)
 * [x] Factorization and linear solve (`factorize`/`lu`, `\`, `ldiv!`)
 * [x] In-place refactorization with a fixed sparsity pattern (`refactor!`)
 * [x] Adjoint / transpose solves
-* [x] Generic element types (`BigFloat`, `ForwardDiff.Dual`, complex)
+* [x] Generic element types (`BigFloat`, `ForwardDiff.Dual`, complex) — LU/Woodbury path
+* [x] Rank-revealing QR (`qr`) for ill-conditioned `S` (`Float64`/`ComplexF64` only)
 
-`qr` is intentionally not provided — a general sparse `QR` causes far more fill than the
-LU-based KLU path; use `factorize`/`lu`.
+`qr(A)` builds the augmented sparse-QR factorization (above). It is the stability path, not
+the throughput path: no symbolic-reuse refactor, no zero-allocation solve, and `Float64`
+/`ComplexF64` only — use `factorize`/`lu` for `Float32`/generic eltypes or hot refactor loops.
 
 ## When is this the right tool?
 
@@ -248,15 +306,21 @@ not throw), again matching KLU. One caveat: once a singular `S` forces the augme
 the cache keeps reusing it even if later `S` values are nonsingular — `init` a fresh cache to
 get back the faster Woodbury path.
 
+For the stable QR path, pass `SparseWithDenseRowColQRFactorization(; check_pattern)` instead.
+It has no `reuse_symbolic`/`strategy`/`refine` (SuiteSparseQR has no symbolic reuse, only the
+augmented mode exists, and augmented QR needs no refinement); singular `A` likewise returns
+`ReturnCode.Infeasible`. It is opt-in — the default algorithm stays the LU one.
+
 ## Public API
 
 ```
 SparseWithDenseRowColMatrix    SelectorMatrix
 sparsepart  fillpart  lowrankfactors  exclusive_sparsepart  denserank
-factorize   lu   \\   ldiv!   refactor!   lu!   update_lowrank!
-SparseWithDenseRowColWoodbury  SparseWithDenseRowColAugmented
+factorize   lu   qr   \\   ldiv!   refactor!   lu!   qr!   update_lowrank!
+SparseWithDenseRowColWoodbury  SparseWithDenseRowColAugmented  SparseWithDenseRowColQRAugmented
 recommend_lowrank_peel   PeelRecommendation
-SparseWithDenseRowColFactorization   # LinearSolve.jl algorithm (extension)
+SparseWithDenseRowColFactorization     # LinearSolve.jl algorithm (LU/Woodbury, default)
+SparseWithDenseRowColQRFactorization   # LinearSolve.jl algorithm (stable QR, opt-in)
 ```
 
 ## Installation

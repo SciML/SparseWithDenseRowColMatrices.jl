@@ -91,7 +91,10 @@ end
     @test_throws SingularException factorize(Asing)
 end
 
-@testset "qr is intentionally unsupported" begin
+@testset "qr returns the augmented QR factorization" begin
     A = rand_sparsedense(20, 2)
-    @test_throws ArgumentError qr(A)
+    b = randn(20)
+    F = qr(A)
+    @test F isa SparseWithDenseRowColQRAugmented
+    @test F \ b ≈ Matrix(A) \ b
 end

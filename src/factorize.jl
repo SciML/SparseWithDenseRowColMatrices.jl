@@ -70,9 +70,49 @@ Alias for [`refactor!`](@ref) — refactor `F` in place with the new values of `
 LinearAlgebra.lu!(F::SparseWithDenseRowColFactorization, A::SparseWithDenseRowColMatrix; kwargs...) =
     refactor!(F, A; kwargs...)
 
-function LinearAlgebra.qr(::SparseWithDenseRowColMatrix)
-    throw(ArgumentError("SparseWithDenseRowColMatrix is solved by an LU-based factorization; use `factorize`/`lu`, not `qr`."))
+"""
+    qr(A::SparseWithDenseRowColMatrix; strategy=:auto) -> SparseWithDenseRowColQRAugmented
+
+QR-factorize `A = S + U V` for numerically stable repeated solves. Builds a single sparse QR
+(SuiteSparseQR) of the bordered system `[S U; V -I]`, returning a
+[`SparseWithDenseRowColQRAugmented`](@ref). Unlike [`factorize`](@ref)/[`lu`](@ref) (the
+LU/Woodbury throughput path) this never forms `S⁻¹`, so it stays accurate even when the sparse
+part `S` is ill-conditioned or nearly singular, as long as `A` itself is nonsingular — the
+FastAlmostBandedMatrices regime.
+
+* `strategy = :auto` (default) or `:augmented`: the augmented bordered-system QR (the only mode).
+* `strategy = :woodbury`: **not supported** — a Woodbury-over-qr(S) approach shares the
+  κ(S)·κ(C) cancellation of the LU Woodbury path and is catastrophically inaccurate on
+  ill-conditioned `S`, defeating the purpose of using QR. Throws.
+
+Only `Float64`/`ComplexF64` are supported (SuiteSparseQR's single-precision sparse QR is
+unavailable on some Julia versions); use `factorize`/`lu` for `Float32`/`ComplexF32` and
+generic eltypes. The factorization has no symbolic-reuse refactor and no
+zero-allocation solve (SuiteSparseQR limitations); it is the stability path, not the
+throughput path. Solve with `F \\ b` / `ldiv!(F, b)`; update values with [`refactor!`](@ref) /
+[`qr!`](@ref) (a full re-`qr`).
+"""
+function LinearAlgebra.qr(A::SparseWithDenseRowColMatrix; strategy::Symbol = :auto)
+    strategy in (:auto, :augmented) && return _augmented_qr(A)
+    strategy === :woodbury && throw(
+        ArgumentError(
+            "qr does not support strategy = :woodbury: a Woodbury-over-qr(S) solve shares the \
+         κ(S)·κ(C) cancellation of the LU Woodbury path and is inaccurate on ill-conditioned S, \
+         defeating the purpose of QR. Use `qr(A; strategy = :augmented)` (the default), or \
+         `factorize(A; strategy = :woodbury)` for the LU Woodbury path."
+        )
+    )
+    throw(ArgumentError("strategy must be :auto or :augmented for qr; got :$strategy"))
 end
+
+"""
+    qr!(F::SparseWithDenseRowColQRAugmented, A::SparseWithDenseRowColMatrix; kwargs...) -> F
+
+Alias for [`refactor!`](@ref) — re-`qr` `F` in place with the new values of `A`. Note this is a
+full re-factorization (SuiteSparseQR has no symbolic reuse), unlike [`lu!`](@ref).
+"""
+LinearAlgebra.qr!(F::SparseWithDenseRowColQRAugmented, A::SparseWithDenseRowColMatrix; kwargs...) =
+    refactor!(F, A; kwargs...)
 
 Base.:\(A::SparseWithDenseRowColMatrix, b::AbstractVecOrMat) = factorize(A) \ b
 
@@ -97,3 +137,20 @@ It is also the default algorithm `LinearSolve` picks for a `SparseWithDenseRowCo
 Only available when `LinearSolve` is loaded (provided by a package extension).
 """
 function SparseWithDenseRowColFactorization end
+
+"""
+    SparseWithDenseRowColQRFactorization(; check_pattern=true)
+
+A [LinearSolve.jl](https://github.com/SciML/LinearSolve.jl) algorithm that solves
+`SparseWithDenseRowColMatrix` systems with the numerically stable augmented sparse QR
+([`SparseWithDenseRowColQRAugmented`](@ref)) through LinearSolve's caching interface. Opt-in
+(the default LinearSolve algorithm for the matrix type remains the LU
+[`SparseWithDenseRowColFactorization`](@ref)); choose this when `S` is ill-conditioned.
+
+* `check_pattern` — validate the pattern on each refactor (`false` skips the check).
+
+There is no `reuse_symbolic` option (SuiteSparseQR has no symbolic-reuse refactor, so a value
+update always re-`qr`s), no `strategy` (only the augmented mode exists), and no `refine` (the
+augmented QR needs no Woodbury refinement). Only available when `LinearSolve` is loaded.
+"""
+function SparseWithDenseRowColQRFactorization end
