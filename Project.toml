@@ -15,12 +15,6 @@ LinearSolve = "7ed4a6bd-45f5-4d41-b270-4a48e9bafcae"
 [extensions]
 SparseWithDenseRowColMatricesLinearSolveExt = "LinearSolve"
 
-# PureKLU is not yet registered in General; resolve it from the SciML repo. `[sources]`
-# is honored on Julia 1.11+; on 1.10 (and for registration) PureKLU must be added/registered
-# separately — see the CI workflow and README.
-[sources]
-PureKLU = {url = "https://github.com/SciML/PureKLU.jl"}
-
 [compat]
 Aqua = "0.8"
 ForwardDiff = "0.10, 1"
