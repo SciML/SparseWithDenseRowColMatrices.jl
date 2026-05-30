@@ -162,6 +162,42 @@ refactor since it has no symbolic reuse) and far slower than the Woodbury fast p
 error is comparable (~`1e-13`) for all three on a well-conditioned `A`. Use `qr` for the
 factorization/rank-revealing semantics, not for speed.
 
+## Rank-deficient / inconsistent least squares (`lstsq`)
+
+`\`, `factorize`/`lu`, and `qr` solve **nonsingular** systems and throw `SingularException`
+when `A` is singular. For a genuinely rank-deficient or inconsistent system, `lstsq(A, b)`
+returns the **minimum-norm least-squares solution** `x = A⁺b` (the Moore–Penrose solution: of
+all `x` minimizing `‖Ax − b‖₂`, the one with smallest `‖x‖₂`).
+
+```julia
+x = lstsq(A, b)                        # exact, dense COD (default)
+x = lstsq(A, b; alg = :iterative)      # structure-exploiting LSQR/LSMR (needs `using IterativeSolvers`)
+x = lstsq(A, b; λ = 1e-3)              # Tikhonov-damped (ridge) variant
+```
+
+This is a **separate, opt-in** entry point — `\`/`factorize`/`qr` stay exact and keep throwing
+on singular `A`; least squares never happens implicitly. The bordered/Woodbury machinery
+*cannot* produce `A⁺b`: solving `[S U; V -I][x;y]=[b;0]` in least squares minimizes a different
+objective than `‖Ax−b‖` (measured 3–65× too large a residual on rank-deficient inconsistent
+systems), and there is no Woodbury-style formula for the pseudoinverse of a sum.
+
+Two engines:
+
+* **`:dense`** (default) — complete-orthogonal decomposition (LAPACK `gelsy`) of the densified
+  `A`. Exact (matches `pinv(Matrix(A))*b` to machine precision), `O(n³)` time / `O(n²)` memory.
+  Because `A = S + U·V` is **always fully dense** (the rank-`r` outer product fills every
+  entry), a direct solve genuinely cannot exploit the sparsity — so this is right up to `n` of
+  a few thousand.
+* **`:iterative`** — LSQR (default) / LSMR driven by `A`'s structured matvec and adjoint
+  (`A*x = S*x + U(Vx)`, `Aᴴu = Sᴴu + Vᴴ(Uᴴu)`), so the dense `A` is **never formed** — for `n`
+  too large to densify. Started from `x0 = 0` it converges to the same minimum-norm solution.
+  It is approximate (to `atol`/`btol`) and fragile under ill-conditioning; if it exhausts its
+  `maxiters` budget it warns and reports the achieved least-squares residual. Lives in a package
+  extension (`using IterativeSolvers`).
+
+Only `Float32`/`Float64`/`ComplexF32`/`ComplexF64` are supported. Adjoint/transpose matvec
+(`A'*u`, `Aᴴ`, `Aᵀ`) is also useful on its own and is computed by the same structured kernel.
+
 ## Benchmarks
 
 A banded sparse interior plus `r = 8` dense rows (`n = 5000`). Factoring only `S` and
@@ -194,9 +230,10 @@ globally-scattered `S` degrades every sparse method.)
 * [x] Matrix–vector / matrix–matrix multiply (`mul!` vector path is allocation-free)
 * [x] Factorization and linear solve (`factorize`/`lu`, `\`, `ldiv!`)
 * [x] In-place refactorization with a fixed sparsity pattern (`refactor!`)
-* [x] Adjoint / transpose solves
+* [x] Adjoint / transpose solves *and* structured adjoint/transpose matvec (`A'*u`, `Aᴴ`, `Aᵀ`)
 * [x] Generic element types (`BigFloat`, `ForwardDiff.Dual`, complex) — LU/Woodbury path
 * [x] Rank-revealing QR (`qr`) for ill-conditioned `S` (`Float64`/`ComplexF64` only)
+* [x] Minimum-norm least squares (`lstsq`) for rank-deficient / inconsistent `A`
 
 `qr(A)` builds the augmented sparse-QR factorization (above). It is the stability path, not
 the throughput path: no symbolic-reuse refactor, no zero-allocation solve, and `Float64`
@@ -317,11 +354,14 @@ augmented mode exists, and augmented QR needs no refinement); singular `A` likew
 SparseWithDenseRowColMatrix    SelectorMatrix
 sparsepart  fillpart  lowrankfactors  exclusive_sparsepart  denserank
 factorize   lu   qr   \\   ldiv!   refactor!   lu!   qr!   update_lowrank!
+lstsq                                  # minimum-norm least squares (rank-deficient / inconsistent)
 SparseWithDenseRowColWoodbury  SparseWithDenseRowColAugmented  SparseWithDenseRowColQRAugmented
 recommend_lowrank_peel   PeelRecommendation
 SparseWithDenseRowColFactorization     # LinearSolve.jl algorithm (LU/Woodbury, default)
 SparseWithDenseRowColQRFactorization   # LinearSolve.jl algorithm (stable QR, opt-in)
 ```
+
+The `:iterative` engine of `lstsq` requires `using IterativeSolvers` (a package extension).
 
 ## Installation
 

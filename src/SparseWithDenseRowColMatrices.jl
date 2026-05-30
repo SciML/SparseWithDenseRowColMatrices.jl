@@ -17,12 +17,13 @@ include("woodbury.jl")
 include("augmented.jl")
 include("qr.jl")
 include("factorize.jl")
+include("lstsq.jl")
 include("detect.jl")
 
 export SparseWithDenseRowColMatrix, SelectorMatrix,
     sparsepart, fillpart, lowrankfactors, exclusive_sparsepart, denserank,
     SparseWithDenseRowColWoodbury, SparseWithDenseRowColAugmented,
-    SparseWithDenseRowColQRAugmented, refactor!, update_lowrank!,
+    SparseWithDenseRowColQRAugmented, refactor!, update_lowrank!, lstsq,
     recommend_lowrank_peel, PeelRecommendation,
     SparseWithDenseRowColFactorization, SparseWithDenseRowColQRFactorization
 

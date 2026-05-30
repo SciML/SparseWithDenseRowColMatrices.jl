@@ -16,6 +16,9 @@ using SafeTestsets, Test
     @safetestset "QR factorization (augmented, stable)" begin
         include("test_qr.jl")
     end
+    @safetestset "Rank-deficient least squares (min-norm A⁺b)" begin
+        include("test_lstsq.jl")
+    end
     @safetestset "Refactorization (Newton path)" begin
         include("test_refactor.jl")
     end
