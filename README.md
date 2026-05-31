@@ -402,10 +402,12 @@ The `:iterative` engine of `lstsq` requires `using IterativeSolvers` (a package 
 
 ## Installation
 
-PureKLU.jl is not yet in the General registry; install it from the SciML repository:
+PureKLU.jl (the LU backend) and SparseColumnPivotedQR.jl (the QR backend) are not yet in the
+General registry; install them from the SciML repositories first:
 
 ```julia
 using Pkg
 Pkg.add(url="https://github.com/SciML/PureKLU.jl")
+Pkg.add(url="https://github.com/SciML/SparseColumnPivotedQR.jl")
 Pkg.add(url="https://github.com/SciML/SparseWithDenseRowColMatrices.jl")
 ```

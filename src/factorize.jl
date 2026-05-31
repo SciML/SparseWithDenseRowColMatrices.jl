@@ -107,8 +107,8 @@ end
 """
     qr!(F::SparseWithDenseRowColQRAugmented, A::SparseWithDenseRowColMatrix; kwargs...) -> F
 
-Alias for [`refactor!`](@ref) — re-`qr` `F` in place with the new values of `A`. Note this is a
-full re-factorization (SuiteSparseQR has no symbolic reuse), unlike [`lu!`](@ref).
+Alias for [`refactor!`](@ref) — re-`qr` `F` in place with the new values of `A`, reusing the
+cached symbolic analysis (column ordering / elimination tree) for a fixed sparsity pattern.
 """
 LinearAlgebra.qr!(F::SparseWithDenseRowColQRAugmented, A::SparseWithDenseRowColMatrix; kwargs...) =
     refactor!(F, A; kwargs...)
@@ -148,8 +148,9 @@ A [LinearSolve.jl](https://github.com/SciML/LinearSolve.jl) algorithm that solve
 
 * `check_pattern` — validate the pattern on each refactor (`false` skips the check).
 
-There is no `reuse_symbolic` option (SuiteSparseQR has no symbolic-reuse refactor, so a value
-update always re-`qr`s), no `strategy` (only the augmented mode exists), and no `refine` (the
-augmented QR needs no Woodbury refinement). Only available when `LinearSolve` is loaded.
+A value update reuses the QR symbolic analysis (`refactor!` calls the backend's `csr_refactor!`),
+so there is no `reuse_symbolic` knob to set. There is no `strategy` (only the augmented mode
+exists) and no `refine` (the augmented QR needs no Woodbury refinement). Only available when
+`LinearSolve` is loaded.
 """
 function SparseWithDenseRowColQRFactorization end

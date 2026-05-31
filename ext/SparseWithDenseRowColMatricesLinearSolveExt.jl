@@ -110,8 +110,8 @@ end
 # QR algorithm (numerically stable, opt-in)
 # ------------------
 # Mirrors SWDRCFactorizationAlg but factors via the augmented sparse QR. There is no
-# `reuse_symbolic`/`strategy`/`refine`: SuiteSparseQR has no symbolic-reuse refactor (a value
-# update always re-`qr`s), only the augmented mode exists, and augmented QR needs no refinement.
+# `reuse_symbolic` knob (a value update reuses the QR symbolic analysis via `refactor!` →
+# `csr_refactor!`), no `strategy` (only the augmented mode exists), and no `refine`.
 struct SWDRCQRFactorizationAlg <: AbstractSparseFactorization
     check_pattern::Bool
 end
@@ -128,9 +128,9 @@ function LinearSolve.init_cacheval(
     return SWDRCCacheval{T}(nothing)
 end
 
-# Refresh the cached QR factorization. `refactor!` re-`qr`s in place (reusing the buffers and
-# the bordered-matrix shape check); it throws on a singular `A` or a changed pattern, in which
-# case we rebuild with `qr`. A genuinely singular `A` makes `qr` throw `SingularException`,
+# Refresh the cached QR factorization. `refactor!` re-factors in place, reusing the cached
+# symbolic analysis (and buffers) for a fixed pattern; it throws on a singular `A` or a changed
+# pattern, in which case we rebuild with `qr`. A genuinely singular `A` makes `qr` throw `SingularException`,
 # which we map to a `nothing` cache → `Infeasible` (matching the LU algorithm's contract).
 function _refresh_qr!(wrap::SWDRCCacheval, A::SparseWithDenseRowColMatrix, alg::SWDRCQRFactorizationAlg)
     f = wrap.fact
