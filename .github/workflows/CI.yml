@@ -29,10 +29,10 @@ jobs:
         with:
           version: ${{ matrix.version }}
       - uses: julia-actions/cache@v2
-      # PureKLU is not yet registered in General; develop it from the SciML repo so the
-      # dependency resolves on every Julia version (`[sources]` in Project.toml covers 1.11+,
-      # but this keeps 1.10 green too). Remove once PureKLU is registered.
-      - name: Develop unregistered PureKLU dependency
-        run: julia --color=yes --project=. -e 'using Pkg; Pkg.develop(url="https://github.com/SciML/PureKLU.jl")'
+      # PureKLU and SparseColumnPivotedQR are not yet registered in General; develop them from
+      # the SciML repos so the dependencies resolve on every Julia version. Remove each once it
+      # is registered.
+      - name: Develop unregistered SciML dependencies
+        run: julia --color=yes --project=. -e 'using Pkg; Pkg.develop([PackageSpec(url="https://github.com/SciML/PureKLU.jl"), PackageSpec(url="https://github.com/SciML/SparseColumnPivotedQR.jl")])'
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1

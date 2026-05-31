@@ -1,12 +1,14 @@
 module SparseWithDenseRowColMatrices
 
 using LinearAlgebra
-using LinearAlgebra: Factorization, SingularException, ldiv!, lu, lu!, mul!, opnorm,
+using LinearAlgebra: Factorization, SingularException, ldiv!, lu, lu!, qr, qr!, mul!, opnorm,
     issuccess, factorize
 using SparseArrays
 using SparseArrays: AbstractSparseMatrixCSC, SparseMatrixCSC, nonzeros, rowvals, getcolptr,
     nnz, sparse
 using PureKLU
+using SparseColumnPivotedQR
+using SparseMatricesCSR: SparseMatrixCSR
 
 import PrecompileTools: @setup_workload, @compile_workload
 
@@ -15,13 +17,18 @@ include("matrix.jl")
 include("matvec.jl")
 include("woodbury.jl")
 include("augmented.jl")
+include("qr.jl")
 include("factorize.jl")
+include("lstsq.jl")
 include("detect.jl")
 
 export SparseWithDenseRowColMatrix, SelectorMatrix,
     sparsepart, fillpart, lowrankfactors, exclusive_sparsepart, denserank,
-    SparseWithDenseRowColWoodbury, SparseWithDenseRowColAugmented, refactor!, update_lowrank!,
-    recommend_lowrank_peel, PeelRecommendation, SparseWithDenseRowColFactorization
+    SparseWithDenseRowColWoodbury, SparseWithDenseRowColAugmented,
+    SparseWithDenseRowColQRAugmented, refactor!, update_lowrank!, lstsq,
+    SparseWithDenseRowColLeastSquares,
+    recommend_lowrank_peel, PeelRecommendation,
+    SparseWithDenseRowColFactorization, SparseWithDenseRowColQRFactorization
 
 # ---------------------
 # Precompilation

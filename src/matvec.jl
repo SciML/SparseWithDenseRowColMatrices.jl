@@ -115,3 +115,57 @@ function Base.:*(A::SparseWithDenseRowColMatrix, X::AbstractMatrix)
     Y = Matrix{T}(undef, size(A, 1), size(X, 2))
     return mul!(Y, A, X, one(T), zero(T))
 end
+
+# ------------------
+# Adjoint / transpose matvec:  Aᴴu = Sᴴu + Vᴴ(Uᴴu)   (and Aᵀ with no conjugation)
+# ------------------
+# Without these, `mul!(y, A', u)` / `A'*u` fall back to LinearAlgebra's generic `getindex`
+# path, which materializes columns of `A` and is ~1000× slower than the structured product —
+# crippling for an iterative least-squares solve, whose every step needs an adjoint matvec.
+
+# w = Uᴴu (length r). Selector U = [I_r; 0] ⇒ (Uᴴu)_k = u_k.
+function _lowrank_adjU!(w, U::AbstractMatrix, u, cnj)
+    @inbounds for k in axes(U, 2)
+        s = zero(eltype(w))
+        for i in axes(U, 1)
+            s += cnj(U[i, k]) * u[i]
+        end
+        w[k] = s
+    end
+    return w
+end
+function _lowrank_adjU!(w, U::SelectorMatrix, u, cnj)
+    @inbounds for k in 1:U.r
+        w[k] = u[k]
+    end
+    return w
+end
+
+# `Sop` is `adjoint`/`transpose`, `cnj` is `conj`/`identity` (for the dense U/V blocks).
+function _adjoint_matvec!(
+        y::AbstractVector, A::SparseWithDenseRowColMatrix, u::AbstractVector,
+        α::Number, β::Number, Sop, cnj
+    )
+    mul!(y, Sop(A.S), u, α, β)                 # y .= α Sᴴu + β y
+    U, V = A.U, A.V
+    r = size(V, 1)
+    w = Vector{promote_type(eltype(A), eltype(u))}(undef, r)
+    _lowrank_adjU!(w, U, u, cnj)               # w = Uᴴu  (length r)
+    @inbounds for k in 1:r
+        wk = α * w[k]
+        for j in axes(V, 2)
+            y[j] += cnj(V[k, j]) * wk           # y .+= α Vᴴw
+        end
+    end
+    return y
+end
+
+for (Wrap, Sop, cnj) in ((:Adjoint, :adjoint, :conj), (:Transpose, :transpose, :identity))
+    @eval LinearAlgebra.mul!(
+        y::AbstractVector, wA::$Wrap{<:Any, <:SparseWithDenseRowColMatrix}, u::AbstractVector,
+        α::Number, β::Number,
+    ) = _adjoint_matvec!(y, parent(wA), u, α, β, $Sop, $cnj)
+    @eval LinearAlgebra.mul!(
+        y::AbstractVector, wA::$Wrap{<:Any, <:SparseWithDenseRowColMatrix}, u::AbstractVector,
+    ) = mul!(y, wA, u, true, false)
+end

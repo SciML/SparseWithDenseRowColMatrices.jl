@@ -8,16 +8,21 @@ LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
 PureKLU = "0c0d3e7f-3a8b-4f7e-b6f1-9a4d2e7c1f01"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+SparseColumnPivotedQR = "a57abbd0-fea5-4d57-96be-5e525945e8e4"
+SparseMatricesCSR = "a0a7dd2c-ebf4-11e9-1f05-cf50bc540ca1"
 
 [weakdeps]
+IterativeSolvers = "42fd0dbc-a981-5370-80f2-aaf504508153"
 LinearSolve = "7ed4a6bd-45f5-4d41-b270-4a48e9bafcae"
 
 [extensions]
+SparseWithDenseRowColMatricesIterativeSolversExt = "IterativeSolvers"
 SparseWithDenseRowColMatricesLinearSolveExt = "LinearSolve"
 
 [compat]
 Aqua = "0.8"
 ForwardDiff = "0.10, 1"
+IterativeSolvers = "0.9"
 LinearAlgebra = "1"
 LinearSolve = "3"
 PrecompileTools = "1"
@@ -25,12 +30,15 @@ PureKLU = "0.1"
 Random = "1"
 SafeTestsets = "0.1"
 SparseArrays = "1"
+SparseColumnPivotedQR = "0.1"
+SparseMatricesCSR = "0.6"
 Test = "1"
 julia = "1.10"
 
 [extras]
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
 ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
+IterativeSolvers = "42fd0dbc-a981-5370-80f2-aaf504508153"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 LinearSolve = "7ed4a6bd-45f5-4d41-b270-4a48e9bafcae"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
@@ -39,4 +47,4 @@ SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Aqua", "ForwardDiff", "LinearAlgebra", "LinearSolve", "Random", "SafeTestsets", "SparseArrays", "Test"]
+test = ["Aqua", "ForwardDiff", "IterativeSolvers", "LinearAlgebra", "LinearSolve", "Random", "SafeTestsets", "SparseArrays", "Test"]
