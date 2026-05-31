@@ -26,6 +26,7 @@ export SparseWithDenseRowColMatrix, SelectorMatrix,
     sparsepart, fillpart, lowrankfactors, exclusive_sparsepart, denserank,
     SparseWithDenseRowColWoodbury, SparseWithDenseRowColAugmented,
     SparseWithDenseRowColQRAugmented, refactor!, update_lowrank!, lstsq,
+    SparseWithDenseRowColLeastSquares,
     recommend_lowrank_peel, PeelRecommendation,
     SparseWithDenseRowColFactorization, SparseWithDenseRowColQRFactorization
 

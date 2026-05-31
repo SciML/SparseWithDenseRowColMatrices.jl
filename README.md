@@ -217,6 +217,20 @@ get the fast structure-exploiting direct solve when it is safe and the exact ans
 supported. Adjoint/transpose matvec (`A'*u`, `Aᴴ`, `Aᵀ`) is computed by the same structured
 kernel and is useful on its own.
 
+For **repeated** least-squares solves with the same `A` (or a Newton / time-stepping loop),
+build the factorization once and reuse it — the sparse factorization of `S` and the small dense
+decompositions are cached, so each solve is a cheap back-solve:
+
+```julia
+F = SparseWithDenseRowColLeastSquares(A)   # structured setup once
+x1 = F \ b1;  ldiv!(x2, F, b2);  …          # each solve reuses S's factorization
+```
+
+Measured (`n = 2000`, `r = 6`): a reused solve is `0.05 ms` / `16 KB` versus the one-shot
+`lstsq(A, b)` at `2.1 ms` / `2.6 MB` — **~44× faster**, since it skips re-factoring `S`. (The
+structured `alg=:auto`/`:structured` path applies; for a general singular `S` the constructor
+errors and you use `lstsq(A, b; alg = :dense)`.)
+
 ## Benchmarks
 
 A banded sparse interior plus `r = 8` dense rows (`n = 5000`). Factoring only `S` and
@@ -377,7 +391,7 @@ default algorithm stays the LU one.
 SparseWithDenseRowColMatrix    SelectorMatrix
 sparsepart  fillpart  lowrankfactors  exclusive_sparsepart  denserank
 factorize   lu   qr   \\   ldiv!   refactor!   lu!   qr!   update_lowrank!
-lstsq                                  # minimum-norm least squares (rank-deficient / inconsistent)
+lstsq   SparseWithDenseRowColLeastSquares   # minimum-norm least squares (one-shot; cached/reusable)
 SparseWithDenseRowColWoodbury  SparseWithDenseRowColAugmented  SparseWithDenseRowColQRAugmented
 recommend_lowrank_peel   PeelRecommendation
 SparseWithDenseRowColFactorization     # LinearSolve.jl algorithm (LU/Woodbury, default)

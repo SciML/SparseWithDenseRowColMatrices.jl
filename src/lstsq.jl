@@ -148,35 +148,56 @@ end
 # A⁺b is assembled from one PureKLU factorization of S + small dense SVD/QR — A is never formed.
 # A SINGULAR S with coordinate-aligned null structure (selector U) is first peeled to a sparse
 # nonsingular S̃ (see `_peel_selector`); a general singular S falls back to the dense COD.
-function _lstsq_structured(
-        A::SparseWithDenseRowColMatrix, b::AbstractVector;
-        tolC::Real = -one(real(float(eltype(A)))), λ::Real = 0,
-        # accept and ignore the other engines' keywords so `alg` can be flipped without edits
-        rcond = nothing, solver = nothing, atol = nothing, btol = nothing,
-        maxiters = nothing, verbose = nothing,
-    )
-    n = size(A, 1)
-    r = denserank(A)
-    length(b) == n || throw(DimensionMismatch("A has $n columns, b has length $(length(b))"))
-    λ ≥ 0 || throw(ArgumentError("λ (Tikhonov damping) must be ≥ 0; got $λ"))
-    iszero(λ) || throw(ArgumentError("lstsq(...; alg=:structured) does not support Tikhonov λ>0; use alg=:dense."))
-    RT = promote_type(eltype(A), eltype(b))
-    _check_lstsq_eltype(RT)
+"""
+    SparseWithDenseRowColLeastSquares{T} <: LinearAlgebra.Factorization{T}
+
+Cached structure-exploiting least-squares factorization of an [`SparseWithDenseRowColMatrix`](@ref)
+`A = S + U V`, for **repeated** minimum-norm least-squares solves (e.g. a Newton / time-stepping
+loop): the expensive work — the sparse factorization of `S` (PureKLU) and the small dense
+SVD/QR — is done once at construction, so each `F \\ b` / `ldiv!(F, b)` is a cheap back-solve
+that **reuses** it. `F \\ b` returns `A⁺b` exactly as [`lstsq`](@ref)`(A, b)` does.
+
+Constructed by `SparseWithDenseRowColLeastSquares(A)`. Only valid where the structured direct
+method applies (`S` nonsingular, or singular with a coordinate-aligned null space); it errors
+otherwise — use `lstsq(A, b; alg = :dense)` for a general singular `S`.
+"""
+struct SparseWithDenseRowColLeastSquares{T, FT} <: LinearAlgebra.Factorization{T}
+    Sfact::FT             # PureKLU factorization of the (possibly peeled) S̃
+    W::Matrix{T}          # n × s active subspace basis
+    Msp::Matrix{T}        # s × s, the assembled Mᴴ⁺ on the active block
+    QL::Matrix{T}         # n × kdef left-null basis (range-of-A projector); n × 0 if full rank
+    n::Int
+    r::Int
+    kdef::Int
+    cbuf::Vector{T}       # length-n scratch reused across solves
+end
+
+Base.size(F::SparseWithDenseRowColLeastSquares) = (F.n, F.n)
+Base.size(F::SparseWithDenseRowColLeastSquares, i::Integer) = i ≤ 2 ? F.n : 1
+denserank(F::SparseWithDenseRowColLeastSquares) = F.r
+
+# Expensive SETUP: factor S (or peel a selector-singular S̃) and build the small dense
+# decompositions. Returns the cached factorization, or `nothing` to signal "fall back to dense"
+# (S singular/near-singular with a non-sparse null space). Used by both the one-shot `lstsq`
+# and the reusable factorization object.
+function _structured_setup(A::SparseWithDenseRowColMatrix, ::Type{RT}; tolC::Real) where {RT}
     TT = float(RT)
     rT = real(TT)
+    n = size(A, 1)
+    r = denserank(A)
     tol = tolC < 0 ? sqrt(eps(rT)) : rT(tolC)
 
     Sown = _own_sparse(TT, A.S)
     Vmat = r > 0 ? Matrix{TT}(A.V) : Matrix{TT}(undef, 0, n)
     fac = _klu_or_peel(Sown, A.U, Vmat)             # factor S, or peel a selector-singular S to S̃
-    fac === nothing && return (zeros(TT, n), false) # S (and any peel) singular → fall back to dense
-    Sfact, Sown, V = fac                            # S, Sown, V are the *effective* (possibly peeled) ones
+    fac === nothing && return nothing               # S (and any peel) singular → fall back to dense
+    Sfact, Sown, V = fac                            # the *effective* (possibly peeled) factors
 
-    if r == 0                                       # A = S nonsingular ⇒ the solution is S⁻¹b
-        x = collect(TT, b)
-        PureKLU.solve!(Sfact, x)
-        return (x, true)
-    end
+    empty_n0 = Matrix{TT}(undef, n, 0)
+    cbuf = Vector{TT}(undef, n)
+    r == 0 && return SparseWithDenseRowColLeastSquares{TT, typeof(Sfact)}(   # A = S nonsingular
+        Sfact, empty_n0, Matrix{TT}(undef, 0, 0), empty_n0, n, 0, 0, cbuf
+    )
 
     Z = Matrix{TT}(undef, n, r)
     materialize_U!(Z, A.U)                          # Z = U
@@ -186,8 +207,7 @@ function _lstsq_structured(
     # Guard: near-singular S makes Z = S⁻¹U huge/garbage and `klu` does NOT throw, which both
     # crashes the SVDs and gives a silently-wrong answer. κ̂(S) = ‖S‖₁·‖Z‖/‖U‖ ≳ κ(S); bail early.
     kappaS = nrmU > 0 ? opnorm(Sown, 1) * norm(Z) / nrmU : zero(rT)
-    (all(isfinite, Z) && isfinite(kappaS) && kappaS ≤ inv(sqrt(eps(rT)))) ||
-        return (zeros(TT, n), false)
+    (all(isfinite, Z) && isfinite(kappaS) && kappaS ≤ inv(sqrt(eps(rT)))) || return nothing
 
     Vadj = Matrix(V')                              # n × r  (adjoint; conjugate for complex)
     C = V * Z                                       # r × r capacitance
@@ -209,29 +229,96 @@ function _lstsq_structured(
     end
     Fs = svd(Msmall)
     sp = [σ > tol * Fs.S[1] ? inv(σ) : zero(rT) for σ in Fs.S]   # truncated pinv of Msmall
+    Msp = Fs.V * Diagonal(sp) * Fs.U'               # s × s assembled Mᴴ⁺ on the active block
 
-    btil = collect(TT, b)
-    if kdef > 0                                     # project b onto range(A) (no-op when full rank)
+    QL = if kdef > 0
         Nl = Fc.U[:, (end - kdef + 1):end]          # null(Cᴴ)  (r × kdef)
         LrA = Vadj * Nl                             # n × kdef
         PureKLU.solve!(Sfact', LrA)                 # left-null(A) = S⁻ᴴ Vᴴ null(Cᴴ)
-        QL = Matrix(qr(LrA).Q)[:, 1:kdef]
-        btil .-= QL * (QL' * btil)
+        Matrix(qr(LrA).Q)[:, 1:kdef]
+    else
+        empty_n0
     end
-    PureKLU.solve!(Sfact, btil)                     # btil = S⁻¹ b̃  (= c)
-    Wtc = W' * btil
-    x = W * (Fs.V * (sp .* (Fs.U' * Wtc))) + (btil - W * Wtc)   # x = Mᴴ⁺ c
+    return SparseWithDenseRowColLeastSquares{TT, typeof(Sfact)}(Sfact, W, Msp, QL, n, r, kdef, cbuf)
+end
 
-    # post-hoc least-squares optimality check (cheap structured matvecs): catches a misjudged
-    # rank/nullity. ‖Aᴴ(Ax−b)‖ → 0 at a minimizer; a loose threshold separates a good solution
-    # (~1e-14 relative) from a grossly wrong one (~1). A false trip only falls `:auto` back to the
-    # exact dense path, so erring conservative is safe.
+# Cheap APPLY: x = A⁺b from the cached factorization (no re-factorization of S). Reads `b` fully
+# before writing `x`, so `x === b` (in-place) is allowed.
+function _structured_apply!(x::AbstractVector, F::SparseWithDenseRowColLeastSquares{T}, b::AbstractVector) where {T}
+    c = F.cbuf
+    copyto!(c, b)
+    if F.kdef > 0                                   # project b onto range(A): c = b − QL(QLᴴ b)
+        mul!(c, F.QL, F.QL' * b, -one(T), one(T))
+    end
+    PureKLU.solve!(F.Sfact, c)                       # c = S̃⁻¹ b̃
+    if size(F.W, 2) > 0
+        Wtc = F.W' * c                              # s-vector
+        copyto!(x, c)
+        mul!(x, F.W, Wtc, -one(T), one(T))          # x = c − W Wᴴc
+        mul!(x, F.W, F.Msp * Wtc, one(T), one(T))   # x += W Mᴴ⁺ Wᴴc
+    else
+        copyto!(x, c)
+    end
+    return x
+end
+
+# One-shot structured solve (returns `(x, ok)`; `ok=false` ⇒ caller falls back to dense). Setup +
+# apply + a post-hoc least-squares-optimality check on the actual `b` (catches a misjudged rank).
+function _lstsq_structured(
+        A::SparseWithDenseRowColMatrix, b::AbstractVector;
+        tolC::Real = -one(real(float(eltype(A)))), λ::Real = 0,
+        # accept and ignore the other engines' keywords so `alg` can be flipped without edits
+        rcond = nothing, solver = nothing, atol = nothing, btol = nothing,
+        maxiters = nothing, verbose = nothing,
+    )
+    n = size(A, 1)
+    length(b) == n || throw(DimensionMismatch("A has $n columns, b has length $(length(b))"))
+    λ ≥ 0 || throw(ArgumentError("λ (Tikhonov damping) must be ≥ 0; got $λ"))
+    iszero(λ) || throw(ArgumentError("lstsq(...; alg=:structured) does not support Tikhonov λ>0; use alg=:dense."))
+    RT = promote_type(eltype(A), eltype(b))
+    _check_lstsq_eltype(RT)
+    TT = float(RT)
+    F = _structured_setup(A, RT; tolC = tolC)
+    F === nothing && return (zeros(TT, n), false)
+    x = _structured_apply!(Vector{TT}(undef, n), F, collect(TT, b))
+
+    # post-hoc least-squares optimality: ‖Aᴴ(Ax−b)‖ → 0 at a minimizer; a loose threshold
+    # separates a good solution (~1e-14 relative) from a grossly wrong one. A false trip only
+    # falls `:auto` back to the exact dense path, so erring conservative is safe.
     res = A * x
     res .-= b
     atr = A' * res
     nrm_atr = norm(atr)
     ok = nrm_atr ≤ 1.0e-6 * (norm(A' * collect(TT, b)) + nrm_atr)
     return (x, ok)
+end
+
+"""
+    SparseWithDenseRowColLeastSquares(A::SparseWithDenseRowColMatrix; tolC=…) -> F
+
+Build a reusable structured least-squares factorization for repeated `A⁺b` solves (see
+[`SparseWithDenseRowColLeastSquares`](@ref)). Errors if the structured direct method does not
+apply to `A` (general singular/near-singular `S`); use `lstsq(A, b; alg = :dense)` there.
+"""
+function SparseWithDenseRowColLeastSquares(A::SparseWithDenseRowColMatrix; tolC::Real = -one(real(float(eltype(A)))))
+    _check_lstsq_eltype(eltype(A))
+    F = _structured_setup(A, eltype(A); tolC = tolC)
+    F === nothing && throw(
+        ArgumentError(
+            "a structured least-squares factorization does not apply to this A (S is singular or " *
+                "near-singular with a non-sparse null space); use `lstsq(A, b; alg = :dense)`."
+        )
+    )
+    return F
+end
+
+LinearAlgebra.ldiv!(F::SparseWithDenseRowColLeastSquares, b::AbstractVector) =
+    (length(b) == F.n || throw(DimensionMismatch()); _structured_apply!(b, F, b))
+LinearAlgebra.ldiv!(x::AbstractVector, F::SparseWithDenseRowColLeastSquares, b::AbstractVector) =
+    (length(b) == F.n || throw(DimensionMismatch()); _structured_apply!(x, F, b))
+function Base.:\(F::SparseWithDenseRowColLeastSquares{T}, b::AbstractVector) where {T}
+    length(b) == F.n || throw(DimensionMismatch())
+    return _structured_apply!(Vector{T}(undef, F.n), F, eltype(b) === T ? b : convert(Vector{T}, b))
 end
 
 function _lstsq_dense(

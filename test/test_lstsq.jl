@@ -210,6 +210,39 @@ end
     @test relerr(lstsq(A, b; alg = :iterative, λ = λ, atol = 1.0e-13, btol = 1.0e-13), xref) < 1.0e-6
 end
 
+@testset "cached factorization (SparseWithDenseRowColLeastSquares) reuses S for repeated solves" begin
+    for sel in (false, true)
+        A = rankdef_nonsingS(100, 4, 2; seed = 1, selector = sel)
+        M = Matrix(A)
+        F = SparseWithDenseRowColLeastSquares(A)
+        @test denserank(F) == 4
+        @test size(F) == (100, 100)
+        for b in (M * randn(100), randn(100))         # consistent, inconsistent
+            xref = minnorm(M, b)
+            @test relerr(F \ b, xref) < 1.0e-9
+            x = copy(b); ldiv!(F, x)                   # in-place (alias-safe)
+            @test relerr(x, xref) < 1.0e-9
+            y = similar(b); ldiv!(y, F, b)             # 3-arg
+            @test relerr(y, xref) < 1.0e-9
+        end
+    end
+    # the cached factorization agrees with the one-shot lstsq on the SAME rhs
+    A = rankdef_nonsingS(80, 3, 1; seed = 2)
+    b = randn(80)
+    @test SparseWithDenseRowColLeastSquares(A) \ b ≈ lstsq(A, b; alg = :structured)
+    # selector-singular S (BVP): the cached factorization peels and works
+    n, r = 80, 3
+    S = spdiagm(0 => fill(3.0, n), 1 => fill(-1.0, n - 1), -1 => fill(-1.0, n - 1))
+    S[1:r, :] .= 0.0; dropzeros!(S)
+    Fb = zeros(r, n); for i in 1:r
+        Fb[i, i] = 1.0; Fb[i, i + r] = 0.3
+    end
+    Abvp = SparseWithDenseRowColMatrix(S, Fb; replace = true); Mbvp = Matrix(Abvp); bb = randn(n)
+    @test relerr(SparseWithDenseRowColLeastSquares(Abvp) \ bb, minnorm(Mbvp, bb)) < 1.0e-9
+    # general singular S: the constructor errors (points the user to alg=:dense)
+    @test_throws ArgumentError SparseWithDenseRowColLeastSquares(rankdef(40, 2; seed = 3))
+end
+
 @testset "lstsq is a separate opt-in: \\ / factorize / qr still throw on singular A" begin
     A = rankdef(50, 2; seed = 3)
     b = randn(50)
