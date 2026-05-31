@@ -103,10 +103,51 @@ function lstsq(A::SparseWithDenseRowColMatrix, b::AbstractVector; alg::Symbol = 
     end
 end
 
+# Sparse "peel" for a SINGULAR S whose null structure is coordinate-aligned (the BVP /
+# boundary-condition case: `replace=true` zeros the selector rows of S, U = [I_r; 0]). The
+# identity A = S + U V = (S + U Uᴴ) + U(V − Uᴴ) re-splits A with S̃ = S + U Uᴴ; for a selector U,
+# U Uᴴ is just `r` diagonal entries, so S̃ stays SPARSE and is typically nonsingular (the zeroed
+# rows get a unit diagonal back), and the rank is unchanged. The structured method then applies
+# to (S̃, U, V − Uᴴ). For a dense U, U Uᴴ is dense (S̃ dense) so no sparse peel exists — return
+# `nothing` and let the caller fall back to the dense COD.
+_peel_selector(S, U, V) = nothing
+function _peel_selector(S::SparseMatrixCSC{T}, U::SelectorMatrix, V::AbstractMatrix{T}) where {T}
+    r = U.r
+    r == 0 && return nothing
+    n = size(S, 1)
+    Stilde = S + sparse(1:r, 1:r, ones(T, r), n, n)        # S̃ = S + U Uᴴ  (sparse)
+    Vtilde = copy(V)
+    @inbounds for k in 1:r
+        Vtilde[k, k] -= one(T)                              # Ṽ = V − Uᴴ
+    end
+    return (Stilde, Vtilde)
+end
+
+# Factor S; on (exact) singularity try the sparse selector-peel and factor S̃ instead. Returns
+# `(Sfact, S_effective, V_effective)` or `nothing` (caller falls back to the dense COD).
+function _klu_or_peel(Sown::SparseMatrixCSC, U, Vmat)
+    try
+        return (PureKLU.klu(Sown), Sown, Vmat)
+    catch e
+        e isa SingularException || rethrow(e)
+    end
+    peeled = _peel_selector(Sown, U, Vmat)
+    peeled === nothing && return nothing
+    Stilde, Vtilde = peeled
+    try
+        return (PureKLU.klu(Stilde), Stilde, Vtilde)
+    catch e
+        e isa SingularException || rethrow(e)
+        return nothing                                   # S̃ still singular → dense fallback
+    end
+end
+
 # Structure-exploiting DIRECT min-norm least-squares (returns `(x, ok)`; `ok=false` signals the
 # caller to fall back to dense because S is singular/near-singular). With S nonsingular,
 # A = S(I + ZV), Z = S⁻¹U; the rank deficiency lives in C = I + V Z (nullity(A)=nullity(C)).
 # A⁺b is assembled from one PureKLU factorization of S + small dense SVD/QR — A is never formed.
+# A SINGULAR S with coordinate-aligned null structure (selector U) is first peeled to a sparse
+# nonsingular S̃ (see `_peel_selector`); a general singular S falls back to the dense COD.
 function _lstsq_structured(
         A::SparseWithDenseRowColMatrix, b::AbstractVector;
         tolC::Real = -one(real(float(eltype(A)))), λ::Real = 0,
@@ -126,12 +167,10 @@ function _lstsq_structured(
     tol = tolC < 0 ? sqrt(eps(rT)) : rT(tolC)
 
     Sown = _own_sparse(TT, A.S)
-    Sfact = try
-        PureKLU.klu(Sown)
-    catch e
-        e isa SingularException || rethrow(e)
-        return (zeros(TT, n), false)                # S exactly singular → fall back to dense
-    end
+    Vmat = r > 0 ? Matrix{TT}(A.V) : Matrix{TT}(undef, 0, n)
+    fac = _klu_or_peel(Sown, A.U, Vmat)             # factor S, or peel a selector-singular S to S̃
+    fac === nothing && return (zeros(TT, n), false) # S (and any peel) singular → fall back to dense
+    Sfact, Sown, V = fac                            # S, Sown, V are the *effective* (possibly peeled) ones
 
     if r == 0                                       # A = S nonsingular ⇒ the solution is S⁻¹b
         x = collect(TT, b)
@@ -139,11 +178,10 @@ function _lstsq_structured(
         return (x, true)
     end
 
-    V = Matrix{TT}(A.V)                             # r × n
     Z = Matrix{TT}(undef, n, r)
     materialize_U!(Z, A.U)                          # Z = U
     nrmU = norm(Z)
-    PureKLU.solve!(Sfact, Z)                        # Z = S⁻¹U
+    PureKLU.solve!(Sfact, Z)                        # Z = S̃⁻¹U
 
     # Guard: near-singular S makes Z = S⁻¹U huge/garbage and `klu` does NOT throw, which both
     # crashes the SVDs and gives a silently-wrong answer. κ̂(S) = ‖S‖₁·‖Z‖/‖U‖ ≳ κ(S); bail early.

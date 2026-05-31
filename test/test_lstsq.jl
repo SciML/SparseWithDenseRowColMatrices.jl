@@ -105,6 +105,32 @@ end
     @test relerr(lstsq(A, b; alg = :structured), minnorm(M, b)) < 1.0e-9
 end
 
+@testset "structured engine peels a selector-singular S (BVP boundary case)" begin
+    # S has its boundary rows zeroed (singular); U is a SelectorMatrix supplying them. The sparse
+    # peel S̃ = S + U Uᴴ (r diagonal entries) keeps the structured DIRECT path — no dense fallback —
+    # and stays exact, for A nonsingular AND rank-deficient, consistent AND inconsistent.
+    for seed in 1:3, rde in (false, true)
+        n, r = 100, 3
+        S = spdiagm(0 => fill(3.0, n), 1 => fill(-1.0, n - 1), -1 => fill(-1.0, n - 1))
+        S[1:r, :] .= 0.0; dropzeros!(S)
+        F = zeros(r, n)
+        for i in 1:r
+            F[i, i] = 1.0; F[i, i + r] = 0.3
+        end
+        rde && (F[r, :] .= F[1, :])                  # make A itself rank-deficient
+        A = SparseWithDenseRowColMatrix(S, F; replace = true)
+        M = Matrix(A); N = nullspace(M)
+        @test rank(M) == n - (rde ? 1 : 0)
+        for (kind, b) in ((:cons, M * randn(n)), (:incons, randn(n)))
+            xref = minnorm(M, b)
+            x = lstsq(A, b; alg = :structured)       # must NOT throw — the peel succeeds
+            @test relerr(x, xref) < 1.0e-9
+            @test norm(x) ≈ norm(xref) rtol = 1.0e-8
+            isempty(N) || @test norm(N' * x) < 1.0e-8
+        end
+    end
+end
+
 @testset ":auto uses structured on nonsingular S, falls back on singular/near-singular S" begin
     # nonsingular S: :auto path agrees with explicit :structured and :dense, all = pinv
     A = rankdef_nonsingS(100, 4, 2; seed = 1)

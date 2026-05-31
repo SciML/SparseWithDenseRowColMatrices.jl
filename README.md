@@ -191,21 +191,27 @@ Engines (`:auto` picks the first that applies):
   So `A⁺b` is assembled from **one sparse factorization of `S`** (PureKLU) + `r` solves (`Z`) +
   small dense SVD/QR on `r × r` and `n × s` (`s ≤ 2r`) blocks — `O(factor(S) + n·r²)`, **>100×
   faster than `:dense`** for large `n` (measured 191× at `n = 2000`, `r = 6`). Handles
-  consistent *and* inconsistent `b` (a rank-`k` projection of `b` onto `range(A)`). Requires `S`
-  nonsingular and well-conditioned — it errors otherwise (where inverting `S` would be silently
-  wrong), so `:auto` falls back to `:dense` there.
+  consistent *and* inconsistent `b` (a rank-`k` projection of `b` onto `range(A)`). A **singular
+  `S` with coordinate-aligned null structure** — the boundary-condition / `replace=true` case,
+  where the zeroed rows are supplied by a `SelectorMatrix` `U` — is handled by a sparse *peel*
+  `S̃ = S + U Uᴴ` (just `r` diagonal entries, so `S̃` stays sparse and is nonsingular) with
+  `A = S̃ + U(V − Uᴴ)`, keeping the direct structure-exploiting path. It errors only when `S` is
+  near-singular or singular with a *general* (dense) null space — where inverting `S` would be
+  silently wrong — so `:auto` falls back to `:dense` there.
 * **`:dense`** — complete-orthogonal decomposition (LAPACK `gelsy`) of the densified `A`. Exact
   (matches `pinv(Matrix(A))*b` to machine precision), `O(n³)` / `O(n²)`. The mandatory fallback
-  when `S` is singular/near-singular (the structured route inverts `S`, so it can't apply there).
+  when `S` is near-singular, or singular with a null space that is *not* coordinate-aligned (so
+  the sparse peel does not apply and there is no structure-exploiting direct route — the
+  null-space correction would itself be dense).
 * **`:iterative`** — LSQR (default) / LSMR driven by `A`'s structured matvec/adjoint, never
   forming `A` — for `n` too large to densify *and* `S` singular (so neither `:structured` nor
   `:dense` apply). Started from `x0 = 0` it converges to the same minimum-norm solution;
   approximate (to `atol`/`btol`), fragile under ill-conditioning, and warns on non-convergence.
   Lives in an extension (`using IterativeSolvers`).
 
-`:auto` (the default) uses `:structured` when `S` is nonsingular and well-conditioned,
-otherwise the exact `:dense` COD — so you get the fast structure-exploiting direct solve when it
-is safe and the exact answer always. Only `Float32`/`Float64`/`ComplexF32`/`ComplexF64` are
+`:auto` (the default) uses `:structured` when `S` is nonsingular (or singular with a
+coordinate-aligned null space) and well-conditioned, otherwise the exact `:dense` COD — so you
+get the fast structure-exploiting direct solve when it is safe and the exact answer always. Only `Float32`/`Float64`/`ComplexF32`/`ComplexF64` are
 supported. Adjoint/transpose matvec (`A'*u`, `Aᴴ`, `Aᵀ`) is computed by the same structured
 kernel and is useful on its own.
 
