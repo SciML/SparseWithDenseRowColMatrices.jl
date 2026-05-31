@@ -2,10 +2,11 @@ module SparseWithDenseRowColMatricesLinearSolveExt
 
 using SparseWithDenseRowColMatrices
 using SparseWithDenseRowColMatrices: SparseWithDenseRowColMatrix, SparseWithDenseRowColWoodbury,
-    SparseWithDenseRowColAugmented, denserank, refactor!, SparseWithDenseRowColFactorization
+    SparseWithDenseRowColAugmented, SparseWithDenseRowColQRAugmented, denserank, refactor!,
+    SparseWithDenseRowColFactorization, SparseWithDenseRowColQRFactorization
 using LinearSolve
 using LinearSolve: LinearCache, OperatorAssumptions, LinearVerbosity, AbstractSparseFactorization
-using LinearAlgebra: LinearAlgebra, ldiv!, issuccess, Factorization, SingularException, factorize
+using LinearAlgebra: LinearAlgebra, ldiv!, issuccess, Factorization, SingularException, factorize, qr
 
 # LinearSolve `@reexport using SciMLBase`, so SciMLBase is reachable through it.
 const SciMLBase = LinearSolve.SciMLBase
@@ -95,6 +96,69 @@ function SciMLBase.solve!(cache::LinearCache, alg::SWDRCFactorizationAlg; kwargs
         cache.isfresh = false
     end
     F = LinearSolve.@get_cacheval(cache, :SWDRCFactorizationAlg).fact
+    return if F !== nothing && issuccess(F)
+        y = ldiv!(cache.u, F, cache.b)
+        SciMLBase.build_linear_solution(alg, y, nothing, cache; retcode = SciMLBase.ReturnCode.Success)
+    else
+        SciMLBase.build_linear_solution(
+            alg, cache.u, nothing, cache; retcode = SciMLBase.ReturnCode.Infeasible
+        )
+    end
+end
+
+# ------------------
+# QR algorithm (numerically stable, opt-in)
+# ------------------
+# Mirrors SWDRCFactorizationAlg but factors via the augmented sparse QR. There is no
+# `reuse_symbolic`/`strategy`/`refine`: SuiteSparseQR has no symbolic-reuse refactor (a value
+# update always re-`qr`s), only the augmented mode exists, and augmented QR needs no refinement.
+struct SWDRCQRFactorizationAlg <: AbstractSparseFactorization
+    check_pattern::Bool
+end
+
+function SparseWithDenseRowColMatrices.SparseWithDenseRowColQRFactorization(; check_pattern::Bool = true)
+    return SWDRCQRFactorizationAlg(check_pattern)
+end
+
+function LinearSolve.init_cacheval(
+        ::SWDRCQRFactorizationAlg, A::SparseWithDenseRowColMatrix{T}, b, u, Pl, Pr,
+        maxiters::Int, abstol, reltol,
+        verbose::Union{LinearVerbosity, Bool}, assumptions::OperatorAssumptions
+    ) where {T}
+    return SWDRCCacheval{T}(nothing)
+end
+
+# Refresh the cached QR factorization. `refactor!` re-`qr`s in place (reusing the buffers and
+# the bordered-matrix shape check); it throws on a singular `A` or a changed pattern, in which
+# case we rebuild with `qr`. A genuinely singular `A` makes `qr` throw `SingularException`,
+# which we map to a `nothing` cache → `Infeasible` (matching the LU algorithm's contract).
+function _refresh_qr!(wrap::SWDRCCacheval, A::SparseWithDenseRowColMatrix, alg::SWDRCQRFactorizationAlg)
+    f = wrap.fact
+    if f isa SparseWithDenseRowColQRAugmented &&
+            size(f) == size(A) && denserank(f) == denserank(A)
+        try
+            refactor!(f, A; check = alg.check_pattern)
+            return wrap
+        catch e
+            (e isa SingularException || e isa ArgumentError || e isa DimensionMismatch) || rethrow(e)
+        end
+    end
+    try
+        wrap.fact = qr(A)
+    catch e
+        e isa SingularException || rethrow(e)
+        wrap.fact = nothing
+    end
+    return wrap
+end
+
+function SciMLBase.solve!(cache::LinearCache, alg::SWDRCQRFactorizationAlg; kwargs...)
+    if cache.isfresh
+        wrap = LinearSolve.@get_cacheval(cache, :SWDRCQRFactorizationAlg)
+        _refresh_qr!(wrap, cache.A, alg)
+        cache.isfresh = false
+    end
+    F = LinearSolve.@get_cacheval(cache, :SWDRCQRFactorizationAlg).fact
     return if F !== nothing && issuccess(F)
         y = ldiv!(cache.u, F, cache.b)
         SciMLBase.build_linear_solution(alg, y, nothing, cache; retcode = SciMLBase.ReturnCode.Success)
