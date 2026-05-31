@@ -170,8 +170,10 @@ returns the **minimum-norm least-squares solution** `x = A⁺b` (the Moore–Pen
 all `x` minimizing `‖Ax − b‖₂`, the one with smallest `‖x‖₂`).
 
 ```julia
-x = lstsq(A, b)                        # exact, dense COD (default)
-x = lstsq(A, b; alg = :iterative)      # structure-exploiting LSQR/LSMR (needs `using IterativeSolvers`)
+x = lstsq(A, b)                        # :auto — structured direct, dense fallback (default)
+x = lstsq(A, b; alg = :structured)     # structure-exploiting direct solve (never densifies A)
+x = lstsq(A, b; alg = :dense)          # exact dense complete-orthogonal decomposition (gelsy)
+x = lstsq(A, b; alg = :iterative)      # LSQR/LSMR (needs `using IterativeSolvers`)
 x = lstsq(A, b; λ = 1e-3)              # Tikhonov-damped (ridge) variant
 ```
 
@@ -181,22 +183,31 @@ on singular `A`; least squares never happens implicitly. The bordered/Woodbury m
 objective than `‖Ax−b‖` (measured 3–65× too large a residual on rank-deficient inconsistent
 systems), and there is no Woodbury-style formula for the pseudoinverse of a sum.
 
-Two engines:
+Engines (`:auto` picks the first that applies):
 
-* **`:dense`** (default) — complete-orthogonal decomposition (LAPACK `gelsy`) of the densified
-  `A`. Exact (matches `pinv(Matrix(A))*b` to machine precision), `O(n³)` time / `O(n²)` memory.
-  Because `A = S + U·V` is **always fully dense** (the rank-`r` outer product fills every
-  entry), a direct solve genuinely cannot exploit the sparsity — so this is right up to `n` of
-  a few thousand.
-* **`:iterative`** — LSQR (default) / LSMR driven by `A`'s structured matvec and adjoint
-  (`A*x = S*x + U(Vx)`, `Aᴴu = Sᴴu + Vᴴ(Uᴴu)`), so the dense `A` is **never formed** — for `n`
-  too large to densify. Started from `x0 = 0` it converges to the same minimum-norm solution.
-  It is approximate (to `atol`/`btol`) and fragile under ill-conditioning; if it exhausts its
-  `maxiters` budget it warns and reports the achieved least-squares residual. Lives in a package
-  extension (`using IterativeSolvers`).
+* **`:structured`** — a **direct** solve that **never densifies `A`**. When `S` is nonsingular,
+  `A = S(I + ZV)` with `Z = S⁻¹U`, and the *entire* rank deficiency collapses into the small
+  `r × r` capacitance `C = I + V Z` (`nullity(A) = nullity(C)`, since `det A = det S · det C`).
+  So `A⁺b` is assembled from **one sparse factorization of `S`** (PureKLU) + `r` solves (`Z`) +
+  small dense SVD/QR on `r × r` and `n × s` (`s ≤ 2r`) blocks — `O(factor(S) + n·r²)`, **>100×
+  faster than `:dense`** for large `n` (measured 191× at `n = 2000`, `r = 6`). Handles
+  consistent *and* inconsistent `b` (a rank-`k` projection of `b` onto `range(A)`). Requires `S`
+  nonsingular and well-conditioned — it errors otherwise (where inverting `S` would be silently
+  wrong), so `:auto` falls back to `:dense` there.
+* **`:dense`** — complete-orthogonal decomposition (LAPACK `gelsy`) of the densified `A`. Exact
+  (matches `pinv(Matrix(A))*b` to machine precision), `O(n³)` / `O(n²)`. The mandatory fallback
+  when `S` is singular/near-singular (the structured route inverts `S`, so it can't apply there).
+* **`:iterative`** — LSQR (default) / LSMR driven by `A`'s structured matvec/adjoint, never
+  forming `A` — for `n` too large to densify *and* `S` singular (so neither `:structured` nor
+  `:dense` apply). Started from `x0 = 0` it converges to the same minimum-norm solution;
+  approximate (to `atol`/`btol`), fragile under ill-conditioning, and warns on non-convergence.
+  Lives in an extension (`using IterativeSolvers`).
 
-Only `Float32`/`Float64`/`ComplexF32`/`ComplexF64` are supported. Adjoint/transpose matvec
-(`A'*u`, `Aᴴ`, `Aᵀ`) is also useful on its own and is computed by the same structured kernel.
+`:auto` (the default) uses `:structured` when `S` is nonsingular and well-conditioned,
+otherwise the exact `:dense` COD — so you get the fast structure-exploiting direct solve when it
+is safe and the exact answer always. Only `Float32`/`Float64`/`ComplexF32`/`ComplexF64` are
+supported. Adjoint/transpose matvec (`A'*u`, `Aᴴ`, `Aᵀ`) is computed by the same structured
+kernel and is useful on its own.
 
 ## Benchmarks
 
@@ -233,7 +244,9 @@ globally-scattered `S` degrades every sparse method.)
 * [x] Adjoint / transpose solves *and* structured adjoint/transpose matvec (`A'*u`, `Aᴴ`, `Aᵀ`)
 * [x] Generic element types (`BigFloat`, `ForwardDiff.Dual`, complex) — LU/Woodbury path
 * [x] Rank-revealing QR (`qr`) for ill-conditioned `S` (`Float64`/`ComplexF64` only)
-* [x] Minimum-norm least squares (`lstsq`) for rank-deficient / inconsistent `A`
+* [x] Minimum-norm least squares (`lstsq`) for rank-deficient / inconsistent `A` — a
+  structure-exploiting **direct** solve (capacitance method) when `S` is nonsingular, >100×
+  faster than densifying; exact dense COD fallback otherwise
 
 `qr(A)` builds the augmented sparse-QR factorization (above). It is the stability path, not
 the throughput path: no symbolic-reuse refactor, no zero-allocation solve, and `Float64`

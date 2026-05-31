@@ -15,6 +15,22 @@ end
 
 minnorm(M, b) = pinv(M) * b      # the oracle: minimum-norm least-squares solution A⁺b
 
+# A = S + U V with S NONSINGULAR and A rank n-k: choose V so the r×r capacitance C = I + V S⁻¹U
+# has nullity k (det A = det S · det C). This is the regime the structured-direct engine targets.
+function rankdef_nonsingS(n, r, k; seed = 1, T = Float64, selector = false)
+    rng = MersenneTwister(seed)
+    S = spdiagm(-1 => fill(T(-1), n - 1), 0 => fill(T(4), n), 1 => fill(T(-1), n - 1))
+    U = selector ? SelectorMatrix{T}(n, r) : T.(randn(rng, n, r))
+    Z = Matrix(S) \ Matrix(U)
+    Q = Matrix(qr(T <: Complex ? randn(rng, T, r, r) : randn(rng, r, r)).Q)
+    d = ones(T, r)
+    for i in 1:k
+        d[i] = zero(T)
+    end
+    V = T.((Q * Diagonal(d) * Q' - I(r)) * pinv(Z))
+    return SparseWithDenseRowColMatrix(S, U, V)
+end
+
 @testset "adjoint / transpose matvec (core, structured Sᴴu + Vᴴ(Uᴴu))" begin
     for (lbl, A) in (
             ("dense-U", rankdef(70, 3; seed = 1)),
@@ -49,7 +65,7 @@ end
                 (:inconsistent, randn(80)),
             )
             xref = minnorm(M, b)
-            x = lstsq(A, b)                       # alg = :dense default
+            x = lstsq(A, b; alg = :dense)
             @test relerr(x, xref) < 1.0e-10
             @test norm(x) ≈ norm(xref) rtol = 1.0e-9          # minimum-norm
             @test norm(M' * (M * x - b)) < 1.0e-8 * norm(M)   # least-squares optimality
@@ -57,6 +73,67 @@ end
             kind === :consistent && @test norm(M * x - b) < 1.0e-9
         end
     end
+end
+
+@testset "structured direct engine: min-norm LS without densifying (S nonsingular)" begin
+    for seed in 1:3, (n, r, k) in ((60, 3, 1), (90, 5, 2), (120, 8, 3)), sel in (false, true)
+        A = rankdef_nonsingS(n, r, k; seed = seed, selector = sel)
+        M = Matrix(A)
+        @test rank(M) == n - k
+        N = nullspace(M)
+        for (kind, b) in ((:consistent, M * randn(n)), (:inconsistent, randn(n)))
+            xref = minnorm(M, b)
+            x = lstsq(A, b; alg = :structured)
+            @test relerr(x, xref) < 1.0e-9
+            @test norm(x) ≈ norm(xref) rtol = 1.0e-8          # minimum-norm
+            @test norm(M' * (M * x - b)) < 1.0e-7 * norm(M)   # least-squares optimality
+            @test norm(N' * x) < 1.0e-8                       # no null-space component
+            kind === :consistent && @test norm(M * x - b) < 1.0e-8
+        end
+    end
+end
+
+@testset "structured engine: complex" begin
+    n, r, k = 70, 3, 1
+    rng = MersenneTwister(5)
+    S = spdiagm(0 => fill(ComplexF64(4), n), -1 => fill(ComplexF64(-1), n - 1), 1 => fill(ComplexF64(-1), n - 1))
+    U = randn(rng, ComplexF64, n, r); Z = Matrix(S) \ U
+    Q = Matrix(qr(randn(rng, ComplexF64, r, r)).Q); d = ones(r); d[1] = 0
+    V = ComplexF64.((Q * Diagonal(d) * Q' - I(r)) * pinv(Z))
+    A = SparseWithDenseRowColMatrix(S, U, V); M = Matrix(A)
+    b = randn(ComplexF64, n)
+    @test relerr(lstsq(A, b; alg = :structured), minnorm(M, b)) < 1.0e-9
+end
+
+@testset ":auto uses structured on nonsingular S, falls back on singular/near-singular S" begin
+    # nonsingular S: :auto path agrees with explicit :structured and :dense, all = pinv
+    A = rankdef_nonsingS(100, 4, 2; seed = 1)
+    M = Matrix(A); b = randn(100); xref = minnorm(M, b)
+    @test relerr(lstsq(A, b), xref) < 1.0e-9                       # :auto default
+    @test relerr(lstsq(A, b; alg = :auto), xref) < 1.0e-9
+    @test lstsq(A, b; alg = :auto) ≈ lstsq(A, b; alg = :structured)
+    @test lstsq(A, b; alg = :auto) ≈ lstsq(A, b; alg = :dense)
+
+    # exactly-singular S (zeroed row): structured klu throws → :auto falls back to dense
+    Asing = rankdef(80, 3; seed = 2)
+    Msing = Matrix(Asing); bs = randn(80)
+    @test relerr(lstsq(Asing, bs; alg = :auto), minnorm(Msing, bs)) < 1.0e-9
+    @test_throws ArgumentError lstsq(Asing, bs; alg = :structured)
+
+    # near-singular S (κ(S) ≈ 5e13, but A well-conditioned): structured would be silently wrong;
+    # :auto must fall back to the exact dense COD and :structured must error (not return garbage)
+    n = 80; rng = MersenneTwister(3)
+    Snear = spdiagm(0 => collect(exp.(range(0, -log(4.7e13); length = n))), -1 => fill(-1.0e-3, n - 1))
+    Anear = SparseWithDenseRowColMatrix(Snear, randn(rng, n, 2), randn(rng, 2, n))
+    Mnear = Matrix(Anear); bn = randn(n)
+    @test cond(Mnear) < 1.0e8                                      # A itself is well-conditioned
+    @test relerr(lstsq(Anear, bn; alg = :auto), minnorm(Mnear, bn)) < 1.0e-7
+    @test_throws ArgumentError lstsq(Anear, bn; alg = :structured)
+end
+
+@testset "structured rejects Tikhonov λ" begin
+    A = rankdef_nonsingS(40, 2, 1; seed = 1)
+    @test_throws ArgumentError lstsq(A, randn(40); alg = :structured, λ = 0.1)
 end
 
 @testset "iterative engine recovers the same minimum-norm solution" begin
