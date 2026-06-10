@@ -7,7 +7,7 @@ if GROUP == "QA"
     Pkg.activate(joinpath(@__DIR__, "qa"))
     Pkg.develop(PackageSpec(path = joinpath(@__DIR__, "..")))
     Pkg.instantiate()
-    include("qa.jl")
+    include(joinpath(@__DIR__, "qa", "qa.jl"))
 else
     @testset "SparseWithDenseRowColMatrices" begin
         @safetestset "Constructors & accessors" begin
