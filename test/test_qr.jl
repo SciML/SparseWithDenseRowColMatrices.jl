@@ -1,4 +1,4 @@
-include("testutils.jl")
+include("shared/testutils.jl")
 using Test, LinearAlgebra, SparseArrays
 
 # A = S + U V with an ILL-conditioned sparse part S (κ(S) ≈ `kappa`) but a well-conditioned

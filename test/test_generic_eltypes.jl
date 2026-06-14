@@ -1,4 +1,4 @@
-include("testutils.jl")
+include("shared/testutils.jl")
 using Test, LinearAlgebra, SparseArrays, ForwardDiff
 
 @testset "Float32 / BigFloat / Complex solve & refactor" begin

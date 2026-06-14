@@ -1,4 +1,4 @@
-include("testutils.jl")
+include("shared/testutils.jl")
 using Test, LinearAlgebra, SparseArrays
 
 n, r = 60, 3

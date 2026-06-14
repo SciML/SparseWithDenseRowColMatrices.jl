@@ -1,4 +1,4 @@
-include("testutils.jl")
+include("shared/testutils.jl")
 using Test, LinearAlgebra
 
 @testset "factorize selects Woodbury for nonsingular S" begin

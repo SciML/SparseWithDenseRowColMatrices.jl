@@ -1,4 +1,4 @@
-include("testutils.jl")
+include("shared/testutils.jl")
 using Test, SparseArrays, LinearAlgebra, LinearSolve
 
 # A classic arrowhead matrix = diagonal bulk + dense last row + dense last column, which is a
