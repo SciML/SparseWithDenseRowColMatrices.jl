@@ -1,4 +1,4 @@
-include("testutils.jl")
+include("shared/testutils.jl")
 using Test, LinearAlgebra, SparseArrays
 
 @testset "r = 0 degenerate (pure sparse)" begin

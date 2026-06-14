@@ -1,4 +1,4 @@
-include("testutils.jl")
+include("shared/testutils.jl")
 using Test, LinearAlgebra
 
 # Build a matrix whose sparse part S is singular (a zero row) but whose assembled A is not,

@@ -1,4 +1,4 @@
-include("testutils.jl")
+include("shared/testutils.jl")
 using Test
 
 n, r = 30, 3
