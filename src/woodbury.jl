@@ -98,7 +98,12 @@ function _woodbury(A::SparseWithDenseRowColMatrix{T}; refine::Integer = 1) where
     n = size(A, 1)
     r = denserank(A)
     Sown = _own_sparse(T, A.S)
-    Sfact = PureKLU.klu(Sown)              # throws SingularException if S is singular
+    # PureKLU never throws on a singular factor: it stops at the zero pivot and reports
+    # `issuccess == false` (factoring further, or solving, reads past the truncated factor and
+    # hits a BoundsError). Surface it as a SingularException so `factorize`'s `:auto` path can
+    # fall back to the augmented system.
+    Sfact = PureKLU.klu(Sown)
+    LinearAlgebra.issuccess(Sfact) || throw(SingularException(0))
     # Own copies of the low-rank factors (S is already copied via `_own_sparse`); this keeps
     # the factorization independent of later in-place mutation of the input's U/V, matching
     # the augmented path. SelectorMatrix is immutable, so `_copy_U` just rebuilds it.

@@ -125,21 +125,18 @@ end
 
 # Factor S; on (exact) singularity try the sparse selector-peel and factor S̃ instead. Returns
 # `(Sfact, S_effective, V_effective)` or `nothing` (caller falls back to the dense COD).
+# PureKLU does not throw on a singular factor — it stops at the zero pivot and reports
+# `issuccess == false` — so a successful factorization is detected via `issuccess`, not the
+# absence of a SingularException.
 function _klu_or_peel(Sown::SparseMatrixCSC, U, Vmat)
-    try
-        return (PureKLU.klu(Sown), Sown, Vmat)
-    catch e
-        e isa SingularException || rethrow(e)
-    end
+    Sfact = PureKLU.klu(Sown)
+    LinearAlgebra.issuccess(Sfact) && return (Sfact, Sown, Vmat)
     peeled = _peel_selector(Sown, U, Vmat)
     peeled === nothing && return nothing
     Stilde, Vtilde = peeled
-    try
-        return (PureKLU.klu(Stilde), Stilde, Vtilde)
-    catch e
-        e isa SingularException || rethrow(e)
-        return nothing                                   # S̃ still singular → dense fallback
-    end
+    Stildefact = PureKLU.klu(Stilde)
+    LinearAlgebra.issuccess(Stildefact) || return nothing   # S̃ still singular → dense fallback
+    return (Stildefact, Stilde, Vtilde)
 end
 
 # Structure-exploiting DIRECT min-norm least-squares (returns `(x, ok)`; `ok=false` signals the
