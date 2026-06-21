@@ -101,7 +101,7 @@ end
     F = qr(A)
     @test F.QaugH === nothing                      # not built until first adjoint/transpose solve
     @test relerr(F' \ b, M' \ b) < 1.0e-11
-    @test F.QaugH !== nothing                    # lazily built (a CSRQRFactorization)
+    @test F.QaugH !== nothing                    # lazily built (a SparseColumnPivotedQRFactorization)
     cached = F.QaugH
     @test relerr(F' \ b, M' \ b) < 1.0e-11
     @test F.QaugH === cached                       # second adjoint solve reuses it (no rebuild)
@@ -144,7 +144,7 @@ end
     b = randn(100)
     F = qr(A1)
     _ = F' \ b                                 # force QaugH to be built
-    @test F.QaugH !== nothing                    # lazily built (a CSRQRFactorization)
+    @test F.QaugH !== nothing                    # lazily built (a SparseColumnPivotedQRFactorization)
     refactor!(F, A2)
     @test F.QaugH === nothing                  # adjoint cache invalidated on refactor
     @test relerr(F \ b, Matrix(A2) \ b) < 1.0e-11

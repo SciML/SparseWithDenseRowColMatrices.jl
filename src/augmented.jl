@@ -57,7 +57,11 @@ function _augmented(A::SparseWithDenseRowColMatrix{T}) where {T}
     n = size(A, 1)
     r = denserank(A)
     Maug = _augmented_matrix(A)
-    Kaug = PureKLU.klu(Maug)               # throws SingularException if A is singular
+    # PureKLU reports a singular factor via `issuccess == false` rather than throwing (see
+    # `_woodbury`); surface it so a singular `A` raises a SingularException instead of returning
+    # a broken factorization whose solve would read past the truncated factor.
+    Kaug = PureKLU.klu(Maug)
+    LinearAlgebra.issuccess(Kaug) || throw(SingularException(0))
     return SparseWithDenseRowColAugmented{T, typeof(Kaug)}(Kaug, n, r, Vector{T}(undef, n + r))
 end
 

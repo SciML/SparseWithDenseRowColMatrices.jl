@@ -8,7 +8,6 @@ using SparseArrays: AbstractSparseMatrixCSC, SparseMatrixCSC, nonzeros, rowvals,
     nnz, sparse
 using PureKLU
 using SparseColumnPivotedQR
-using SparseMatricesCSR: SparseMatrixCSR
 
 import PrecompileTools: @setup_workload, @compile_workload
 

@@ -7,7 +7,7 @@
 #     [ S   U ] [x]   [b]
 #     [ V  -I ] [y] = [0]
 #
-# factored as ONE sparse, rank-revealing, column-pivoted QR (SparseColumnPivotedQR's `csr_qr`)
+# factored as ONE sparse, rank-revealing, column-pivoted QR (SparseColumnPivotedQR's `scpqr`)
 # of size (n+r). This is the numerically stable analogue of the augmented LU path: it never
 # forms `S⁻¹`, so it stays accurate even when the sparse part `S` is ill-conditioned or nearly
 # singular but the dense rows/columns regularize `A` (the FastAlmostBandedMatrices regime). The
@@ -17,7 +17,7 @@
 # near the noise floor across the whole range.
 #
 # Backend: SparseColumnPivotedQR.jl (pure Julia, like PureKLU is for LU). Versus a SuiteSparseQR
-# backend this gives (a) an allocation-free in-place solve, (b) a symbolic-reuse `csr_refactor!`
+# backend this gives (a) an allocation-free in-place solve, (b) a symbolic-reuse `scpqr_refactor!`
 # for the Newton/time-stepping hot path, (c) genuine column-pivoted rank revelation (so a
 # singular `A` is detected directly from `rank`), and (d) generic element types.
 
@@ -38,8 +38,8 @@ and `ForwardDiff.Dual`). The adjoint/transpose solve uses a separately built, la
 factorization of the bordered system's adjoint.
 """
 mutable struct SparseWithDenseRowColQRAugmented{T, QF} <: LinearAlgebra.Factorization{T}
-    Qaug::QF                       # CSRQRFactorization of [S U; V -I]
-    QaugH::Any                     # nothing until first adjoint/transpose solve, then a CSRQRFactorization
+    Qaug::QF                       # SparseColumnPivotedQRFactorization of [S U; V -I]
+    QaugH::Any                     # nothing until first adjoint/transpose solve, then a SparseColumnPivotedQRFactorization
     MaugC::SparseMatrixCSC{T, Int} # owned bordered matrix (CSC; source for refactor! and the adjoint)
     n::Int
     r::Int
@@ -53,16 +53,15 @@ Base.size(F::SparseWithDenseRowColQRAugmented, i::Integer) = i ≤ 2 ? F.n : 1
 LinearAlgebra.issuccess(F::SparseWithDenseRowColQRAugmented) = F.rankaug == F.n + F.r
 denserank(F::SparseWithDenseRowColQRAugmented) = F.r
 
-_bordered_csr(MaugC::SparseMatrixCSC) = SparseMatrixCSR(MaugC)
-# CSR of Mᴴ / Mᵀ (for the adjoint/transpose factorization), built from the owned CSC.
-_adjoint_csr(MaugC::SparseMatrixCSC{T}) where {T} = _bordered_csr(SparseMatrixCSC{T, Int}(MaugC'))
-_transpose_csr(MaugC::SparseMatrixCSC{T}) where {T} = _bordered_csr(SparseMatrixCSC{T, Int}(transpose(MaugC)))
+# CSC of Mᴴ / Mᵀ (for the adjoint/transpose factorization), built from the owned CSC.
+_adjoint_csc(MaugC::SparseMatrixCSC{T}) where {T} = SparseMatrixCSC{T, Int}(MaugC')
+_transpose_csc(MaugC::SparseMatrixCSC{T}) where {T} = SparseMatrixCSC{T, Int}(transpose(MaugC))
 
 function _augmented_qr(A::SparseWithDenseRowColMatrix{T}) where {T}
     n = size(A, 1)
     r = denserank(A)
     MaugC = SparseMatrixCSC{T, Int}(_augmented_matrix(A))
-    Qaug = SparseColumnPivotedQR.csr_qr(_bordered_csr(MaugC))
+    Qaug = SparseColumnPivotedQR.scpqr(MaugC)
     rankaug = LinearAlgebra.rank(Qaug)
     rankaug == n + r || throw(SingularException(0))   # A singular ⇒ bordered system singular
     return SparseWithDenseRowColQRAugmented{T, typeof(Qaug)}(
@@ -105,13 +104,13 @@ LinearAlgebra.ldiv!(Y::AbstractMatrix, F::SparseWithDenseRowColQRAugmented, B::A
 # column-pivoted QR has no `Qaug' \ b`, so we build a SEPARATE factorization of the adjoint and
 # cache it lazily (it is invalidated on every `refactor!`).
 function _augfact_adj!(F::SparseWithDenseRowColQRAugmented)
-    F.QaugH === nothing && (F.QaugH = SparseColumnPivotedQR.csr_qr(_adjoint_csr(F.MaugC)))
+    F.QaugH === nothing && (F.QaugH = SparseColumnPivotedQR.scpqr(_adjoint_csc(F.MaugC)))
     return F.QaugH
 end
 # For real T, transpose == adjoint, so reuse the cached factorization; for complex T the
 # (rare) transpose path rebuilds qr(transpose(Maug)) each call rather than holding a 3rd cache.
 _augfact_tr!(F::SparseWithDenseRowColQRAugmented{<:Real}) = _augfact_adj!(F)
-_augfact_tr!(F::SparseWithDenseRowColQRAugmented) = SparseColumnPivotedQR.csr_qr(_transpose_csr(F.MaugC))
+_augfact_tr!(F::SparseWithDenseRowColQRAugmented) = SparseColumnPivotedQR.scpqr(_transpose_csc(F.MaugC))
 
 for (Wrap, getfact) in ((AdjointFact, :_augfact_adj!), (TransposeFact, :_augfact_tr!))
     @eval function LinearAlgebra.ldiv!(
@@ -152,7 +151,7 @@ function refactor!(F::SparseWithDenseRowColQRAugmented{T}, A::SparseWithDenseRow
     denserank(A) == F.r && size(A, 1) == F.n ||
         throw(DimensionMismatch("shape changed; rebuild with `qr`."))
     F.MaugC = SparseMatrixCSC{T, Int}(_augmented_matrix(A))
-    SparseColumnPivotedQR.csr_refactor!(F.Qaug, _bordered_csr(F.MaugC))   # reuses the symbolic analysis
+    SparseColumnPivotedQR.scpqr_refactor!(F.Qaug, F.MaugC)   # reuses the symbolic analysis
     F.QaugH = nothing                                                      # invalidate cached adjoint
     F.rankaug = LinearAlgebra.rank(F.Qaug)
     check && (F.rankaug == F.n + F.r || throw(SingularException(0)))
