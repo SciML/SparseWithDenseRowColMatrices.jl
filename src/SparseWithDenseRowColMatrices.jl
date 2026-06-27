@@ -1,13 +1,10 @@
 module SparseWithDenseRowColMatrices
 
-using LinearAlgebra
-using LinearAlgebra: Factorization, SingularException, ldiv!, lu, lu!, qr, qr!, mul!, opnorm,
-    issuccess, factorize
-using SparseArrays
-using SparseArrays: AbstractSparseMatrixCSC, SparseMatrixCSC, nonzeros, rowvals, getcolptr,
-    nnz, sparse
-using PureKLU
-using SparseColumnPivotedQR
+using LinearAlgebra: LinearAlgebra, SingularException, ldiv!, lu!, qr, mul!, opnorm, factorize,
+    ColumnNorm, Diagonal, I, diag, norm, svd, Adjoint, Transpose
+using SparseArrays: SparseArrays, SparseMatrixCSC, nonzeros, sparse
+using PureKLU: PureKLU
+using SparseColumnPivotedQR: SparseColumnPivotedQR
 
 import PrecompileTools: @setup_workload, @compile_workload
 
