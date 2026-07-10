@@ -1,5 +1,7 @@
 using SciMLTesting, SparseWithDenseRowColMatrices
 
+include("public_api_docs.jl")
+
 const LA = SparseWithDenseRowColMatrices.LinearAlgebra
 
 # Non-public names accessed qualified from other packages / Base. Each goes public
