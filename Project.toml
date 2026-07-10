@@ -18,6 +18,9 @@ LinearSolve = "7ed4a6bd-45f5-4d41-b270-4a48e9bafcae"
 SparseWithDenseRowColMatricesIterativeSolversExt = "IterativeSolvers"
 SparseWithDenseRowColMatricesLinearSolveExt = "LinearSolve"
 
+[sources]
+SciMLTesting = {url = "https://github.com/SciML/SciMLTesting.jl", rev = "a5cecca928f2c684c23505c3cd83921d71753e2e"}
+
 [compat]
 Aqua = "0.8"
 ForwardDiff = "0.10, 1"
@@ -28,7 +31,7 @@ PrecompileTools = "1.2"
 PureKLU = "1"
 Random = "1"
 SafeTestsets = "0.1, 1"
-SciMLTesting = "1"
+SciMLTesting = "2.1"
 SparseArrays = "1"
 SparseColumnPivotedQR = "2.1"
 Test = "1"
