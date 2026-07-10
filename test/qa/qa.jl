@@ -1,6 +1,5 @@
 using SciMLTesting, SparseWithDenseRowColMatrices
-
-include("public_api_docs.jl")
+using Test
 
 const LA = SparseWithDenseRowColMatrices.LinearAlgebra
 
@@ -44,3 +43,12 @@ run_qa(
         all_qualified_accesses_are_public = (; ignore = QA_NONPUBLIC),
     ),
 )
+
+@testset "public API appears in README" begin
+    readme = read(joinpath(pkgdir(SparseWithDenseRowColMatrices), "README.md"), String)
+    missing = filter(
+        name -> !occursin(String(name), readme),
+        public_api_names(SparseWithDenseRowColMatrices),
+    )
+    @test isempty(missing)
+end
