@@ -4,9 +4,6 @@ SciMLTesting = "09d9d899-5365-40a9-917a-5f67fddea283"
 SparseWithDenseRowColMatrices = "80e09e16-2b43-4bb0-96aa-b2ce656e0cca"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
-[sources]
-SparseWithDenseRowColMatrices = {path = "../.."}
-
 [compat]
 SafeTestsets = "0.0.1, 0.1, 1"
 SciMLTesting = "2.1"
