@@ -5,7 +5,6 @@ SparseWithDenseRowColMatrices = "80e09e16-2b43-4bb0-96aa-b2ce656e0cca"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [sources]
-SciMLTesting = {url = "https://github.com/SciML/SciMLTesting.jl", rev = "a5cecca928f2c684c23505c3cd83921d71753e2e"}
 SparseWithDenseRowColMatrices = {path = "../.."}
 
 [compat]
