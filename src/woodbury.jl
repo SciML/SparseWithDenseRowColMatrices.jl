@@ -15,10 +15,12 @@
 Sherman–Morrison–Woodbury factorization of an [`SparseWithDenseRowColMatrix`](@ref) `A = S + U V`,
 built from a single [`PureKLU`](https://github.com/SciML/PureKLU.jl) LU factorization of the
 sparse part `S` plus a dense `r × r` correction `C = I + V S⁻¹U`. Created by
-[`factorize`](@ref)/[`lu`](@ref) (the default strategy when `S` is nonsingular). Solve with
-`\\`/`ldiv!`; update in place for a new set of numeric values with [`refactor!`](@ref).
+[`factorize`](@ref LinearAlgebra.factorize)/[`lu`](@ref LinearAlgebra.lu) (the default
+strategy when `S` is nonsingular). Solve with `\\`/`ldiv!`; update in place for a new set
+of numeric values with [`refactor!`](@ref).
 
-Valid only when both `S` and `C` are nonsingular; [`factorize`](@ref) falls back to
+Valid only when both `S` and `C` are nonsingular;
+[`factorize`](@ref LinearAlgebra.factorize) falls back to
 [`SparseWithDenseRowColAugmented`](@ref) otherwise. The forward error of the Woodbury solve scales
 with `κ(S)·κ(C)` rather than `κ(A)`, so one step of iterative refinement (`refine` keyword,
 default `1`) is applied to restore backward stability — this is allocation-free, reusing the
@@ -322,14 +324,14 @@ Update only the low-rank factors of `F`, **reusing the cached factorization of t
 part `S`** (no re-factorization of `S`). This is the Sherman–Morrison–Woodbury fast path for
 a fixed sparse base solved repeatedly under a *changing low-rank correction* — varying
 boundary conditions / coupling, adding or removing a constraint, sensitivity or parameter
-sweeps. Factor `S` once with [`factorize`](@ref), then per step `update_lowrank!(F; V=…)`
-and solve.
+sweeps. Factor `S` once with [`factorize`](@ref LinearAlgebra.factorize), then per step
+`update_lowrank!(F; V=…)` and solve.
 
 Passing `V` (the `r × n` dense factor) recomputes only the `r × r` correction `C = I + V Z`.
 Passing `U` additionally recomputes `Z = S⁻¹U` (one multi-RHS solve against the *cached* `S`
 factorization), so omit `U` when the left factor is unchanged. The sparsity pattern and rank
 are fixed; to change `S`'s values use [`refactor!`](@ref), and to change the rank rebuild
-with [`factorize`](@ref).
+with [`factorize`](@ref LinearAlgebra.factorize).
 """
 function update_lowrank!(F::SparseWithDenseRowColWoodbury; U = nothing, V = nothing)
     if U !== nothing

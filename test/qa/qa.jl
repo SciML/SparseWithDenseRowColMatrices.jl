@@ -19,6 +19,7 @@ const QA_NONPUBLIC = (
 run_qa(
     SparseWithDenseRowColMatrices;
     explicit_imports = true,
+    api_docs_kwargs = (; rendered = true),
     # `ambiguities = false`: the only remaining ambiguities are inert cross-products of
     # our matrix types with LinearAlgebra's structured matrices (Diagonal/Bidiagonal/
     # Tridiagonal/Triangular) in `*`/`mul!` — combinations that never arise in use, and

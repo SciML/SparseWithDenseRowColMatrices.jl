@@ -21,9 +21,10 @@ Factorize `A = S + U V` for repeated solves. Returns an [`SparseWithDenseRowColW
 
 The returned `F` **caches the symbolic analysis** (BTF + AMD ordering of `S`). Solve any
 number of right-hand sides with `F \\ b` / `ldiv!(F, b)`, and update the numeric values for a
-new matrix of the **same sparsity pattern** with [`refactor!`](@ref) / [`lu!`](@ref) — that
-reuses the cached symbolic analysis (no re-analysis), which is the ≈7× per-step win in a
-Newton / time-stepping loop. Only call `factorize`/`lu` afresh when the pattern changes.
+new matrix of the **same sparsity pattern** with [`refactor!`](@ref) /
+[`lu!`](@ref LinearAlgebra.lu!) — that reuses the cached symbolic analysis (no re-analysis),
+which is the ≈7× per-step win in a Newton / time-stepping loop. Only call `factorize`/`lu`
+afresh when the pattern changes.
 """
 function LinearAlgebra.factorize(
         A::SparseWithDenseRowColMatrix; strategy::Symbol = :auto, refine::Integer = 1,
@@ -57,8 +58,9 @@ end
 """
     lu(A::SparseWithDenseRowColMatrix; kwargs...) -> F
 
-Alias for [`factorize`](@ref). Named `lu` (not `qr`) because the sparse bulk is factored by
-an LU-based solver (PureKLU); `qr` is intentionally not provided.
+Alias for [`factorize`](@ref LinearAlgebra.factorize). Named `lu` (not `qr`) because the
+sparse bulk is factored by an LU-based solver (PureKLU); `qr` is intentionally not
+provided.
 """
 LinearAlgebra.lu(A::SparseWithDenseRowColMatrix; kwargs...) = factorize(A; kwargs...)
 
@@ -76,20 +78,23 @@ LinearAlgebra.lu!(F::SparseWithDenseRowColFactorization, A::SparseWithDenseRowCo
 QR-factorize `A = S + U V` for numerically stable repeated solves. Builds a single
 rank-revealing, column-pivoted sparse QR ([SparseColumnPivotedQR](https://github.com/SciML/SparseColumnPivotedQR.jl))
 of the bordered system `[S U; V -I]`, returning a [`SparseWithDenseRowColQRAugmented`](@ref).
-Unlike [`factorize`](@ref)/[`lu`](@ref) (the LU/Woodbury throughput path) this never forms
-`S⁻¹`, so it stays accurate even when the sparse part `S` is ill-conditioned or nearly singular,
-as long as `A` itself is nonsingular — the FastAlmostBandedMatrices regime.
+Unlike [`factorize`](@ref LinearAlgebra.factorize)/[`lu`](@ref LinearAlgebra.lu) (the
+LU/Woodbury throughput path) this never forms `S⁻¹`, so it stays accurate even when the
+sparse part `S` is ill-conditioned or nearly singular, as long as `A` itself is nonsingular
+— the FastAlmostBandedMatrices regime.
 
 * `strategy = :auto` (default) or `:augmented`: the augmented bordered-system QR (the only mode).
 * `strategy = :woodbury`: **not supported** — a Woodbury-over-qr(S) approach shares the
   κ(S)·κ(C) cancellation of the LU Woodbury path and is catastrophically inaccurate on
   ill-conditioned `S`, defeating the purpose of using QR. Throws.
 
-The solve is **allocation-free** and [`refactor!`](@ref) / [`qr!`](@ref) **reuses the symbolic
-analysis** (column ordering / elimination tree) for a fixed sparsity pattern, so the QR path is
-usable in a Newton / time-stepping hot loop, not only for one-off stable solves. Any element
-type the backend supports works (the BLAS floats plus generic numbers such as `BigFloat` and
-`ForwardDiff.Dual`). Solve with `F \\ b` / `ldiv!(F, b)`; update values with `refactor!`/`qr!`.
+The solve is **allocation-free** and [`refactor!`](@ref) /
+[`qr!`](@ref LinearAlgebra.qr!) **reuses the symbolic analysis** (column ordering /
+elimination tree) for a fixed sparsity pattern, so the QR path is usable in a Newton /
+time-stepping hot loop, not only for one-off stable solves. Any element type the backend
+supports works (the BLAS floats plus generic numbers such as `BigFloat` and
+`ForwardDiff.Dual`). Solve with `F \\ b` / `ldiv!(F, b)`; update values with
+`refactor!`/`qr!`.
 """
 function LinearAlgebra.qr(A::SparseWithDenseRowColMatrix; strategy::Symbol = :auto)
     strategy in (:auto, :augmented) && return _augmented_qr(A)
@@ -107,8 +112,9 @@ end
 """
     qr!(F::SparseWithDenseRowColQRAugmented, A::SparseWithDenseRowColMatrix; kwargs...) -> F
 
-Alias for [`refactor!`](@ref) — re-`qr` `F` in place with the new values of `A`. Note this is a
-full re-factorization (SuiteSparseQR has no symbolic reuse), unlike [`lu!`](@ref).
+Alias for [`refactor!`](@ref) — re-`qr` `F` in place with the new values of `A`. Note this is
+a full re-factorization (SuiteSparseQR has no symbolic reuse), unlike
+[`lu!`](@ref LinearAlgebra.lu!).
 """
 LinearAlgebra.qr!(F::SparseWithDenseRowColQRAugmented, A::SparseWithDenseRowColMatrix; kwargs...) =
     refactor!(F, A; kwargs...)
@@ -131,7 +137,7 @@ It is also the default algorithm `LinearSolve` picks for a `SparseWithDenseRowCo
   the sparsity pattern may change between solves).
 * `check_pattern` — validate the pattern on each refactor (`false` skips the check; may error
   if the pattern actually changes).
-* `strategy`, `refine` — forwarded to [`factorize`](@ref).
+* `strategy`, `refine` — forwarded to [`factorize`](@ref LinearAlgebra.factorize).
 
 Only available when `LinearSolve` is loaded (provided by a package extension).
 """
