@@ -18,9 +18,9 @@
 
 Fallback factorization of an [`SparseWithDenseRowColMatrix`](@ref) `A = S + U V` via a single sparse
 LU of the bordered system `[S U; V -I]` of size `n + r`. Used automatically by
-[`factorize`](@ref) when `S` is singular or the Woodbury correction is ill-conditioned, and
-selectable explicitly with `strategy = :augmented`. Requires only `A` (not `S`) to be
-nonsingular.
+[`factorize`](@ref LinearAlgebra.factorize) when `S` is singular or the Woodbury
+correction is ill-conditioned, and selectable explicitly with `strategy = :augmented`.
+Requires only `A` (not `S`) to be nonsingular.
 """
 mutable struct SparseWithDenseRowColAugmented{T, KF} <: LinearAlgebra.Factorization{T}
     Kaug::KF             # PureKLU.KLUFactorization of [S U; V -I]

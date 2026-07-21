@@ -18,10 +18,11 @@ low-rank `fill` (which in the banded case sits in the top rows as boundary condi
 kept as the explicit outer product `U * V` rather than folded into a band.
 
 The structure is exactly the one the Sherman–Morrison–Woodbury identity exploits, so
-[`factorize`](@ref)/`\\` solve `A x = b` by factoring only the sparse `S` (with
-[`PureKLU`](https://github.com/SciML/PureKLU.jl)) and applying a small `r × r` dense
-correction — see [`SparseWithDenseRowColWoodbury`](@ref). When `S` is singular but `A` is not, an
-[`SparseWithDenseRowColAugmented`](@ref) fallback is used automatically.
+[`factorize`](@ref LinearAlgebra.factorize)/`\\` solve `A x = b` by factoring only the
+sparse `S` (with [`PureKLU`](https://github.com/SciML/PureKLU.jl)) and applying a small
+`r × r` dense correction — see [`SparseWithDenseRowColWoodbury`](@ref). When `S` is
+singular but `A` is not, an [`SparseWithDenseRowColAugmented`](@ref) fallback is used
+automatically.
 
 # Constructors
 
@@ -35,7 +36,7 @@ correction — see [`SparseWithDenseRowColWoodbury`](@ref). When `S` is singular
       nonsingular for the Woodbury path.
 
 ```jldoctest
-julia> using SparseWithDenseRowColMatrices, SparseArrays
+julia> using SparseWithDenseRowColMatrices, SparseArrays, LinearAlgebra
 
 julia> S = sparse(1.0I, 4, 4); fill = reshape(Float64[1,2,3,4], 1, 4);
 

@@ -29,7 +29,7 @@ rank-revealing, column-pivoted sparse QR (SparseColumnPivotedQR) of the bordered
 `[S U; V -I]` of size `n + r`. This is the numerically stable analogue of
 [`SparseWithDenseRowColAugmented`](@ref) (which uses LU): it never forms `S⁻¹`, so it stays
 accurate even when `S` is ill-conditioned or nearly singular, as long as `A` itself is
-nonsingular. Created by [`qr`](@ref).
+nonsingular. Created by [`qr`](@ref LinearAlgebra.qr).
 
 The solve is allocation-free, [`refactor!`](@ref) reuses the symbolic analysis (so it is the
 throughput path for fixed-pattern Newton loops as well as the stability path), and any element
