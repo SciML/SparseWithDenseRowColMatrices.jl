@@ -22,6 +22,10 @@ _transpose_factorization(f::F) where {T, F <: LinearAlgebra.Factorization{T}} =
 
 Base.parent(F::_AdjointFactorization) = F.parent
 Base.parent(F::_TransposeFactorization) = F.parent
+Base.size(F::_AdjointFactorization) = size(parent(F))
+Base.size(F::_AdjointFactorization, i::Integer) = size(parent(F), i)
+Base.size(F::_TransposeFactorization) = size(parent(F))
+Base.size(F::_TransposeFactorization, i::Integer) = size(parent(F), i)
 
 include("SelectorMatrix.jl")
 include("matrix.jl")
