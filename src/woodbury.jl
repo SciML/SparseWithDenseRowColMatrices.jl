@@ -35,7 +35,7 @@ mutable struct SparseWithDenseRowColWoodbury{T, KF, TS, TU, TV, CF} <: LinearAlg
     C::Matrix{T}         # r×r scratch holding (after lu!) the LU factors of I + V*Z
     Cfact::CF            # lu!(C)
     ywork::Vector{T}     # length n — holds S⁻¹b
-    tr::Vector{T}        # length r — V*y and C⁻¹(·)
+    rwork::Vector{T}     # length r — V*y and C⁻¹(·)
     res::Vector{T}       # length n — structured residual / correction
     borig::Vector{T}     # length n — saved RHS for iterative refinement
     r::Int
@@ -44,11 +44,11 @@ mutable struct SparseWithDenseRowColWoodbury{T, KF, TS, TU, TV, CF} <: LinearAlg
 end
 
 function SparseWithDenseRowColWoodbury(
-        Sfact, Sown, U, V, Z::Matrix{T}, C, Cfact, ywork, tr, res, borig, r, refine, ill
+        Sfact, Sown, U, V, Z::Matrix{T}, C, Cfact, ywork, rwork, res, borig, r, refine, ill
     ) where {T}
     return SparseWithDenseRowColWoodbury{
         T, typeof(Sfact), typeof(Sown), typeof(U), typeof(V), typeof(Cfact),
-    }(Sfact, Sown, U, V, Z, C, Cfact, ywork, tr, res, borig, r, refine, ill)
+    }(Sfact, Sown, U, V, Z, C, Cfact, ywork, rwork, res, borig, r, refine, ill)
 end
 
 Base.size(F::SparseWithDenseRowColWoodbury) = (size(F.Sown, 1), size(F.Sown, 2))
@@ -56,6 +56,8 @@ Base.size(F::SparseWithDenseRowColWoodbury, i::Integer) = size(F.Sown, i)
 LinearAlgebra.issuccess(F::SparseWithDenseRowColWoodbury) =
     LinearAlgebra.issuccess(F.Sfact) && LinearAlgebra.issuccess(F.Cfact)
 denserank(F::SparseWithDenseRowColWoodbury) = F.r
+Base.adjoint(F::SparseWithDenseRowColWoodbury) = _adjoint_factorization(F)
+Base.transpose(F::SparseWithDenseRowColWoodbury) = _transpose_factorization(F)
 
 # Underlying-float type used to pick conditioning / refinement tolerances.
 _tol_float(::Type{T}) where {T <: AbstractFloat} = T
@@ -65,15 +67,7 @@ _tol_float(::Type{T}) where {T} = Float64    # ForwardDiff.Dual, Rational, …
 # Build a freshly-owned SparseMatrixCSC{T,Ti} (Ti a KLU index type) we are free to mutate.
 # `Int` is always a valid KLU index type on a given build (Int32 on 32-bit, Int64 on 64-bit),
 # so it is the safe fallback when S's index type is not accepted by PureKLU on this platform.
-function _own_sparse(::Type{T}, S::SparseArrays.AbstractSparseMatrixCSC) where {T}
-    Si = SparseMatrixCSC(S)
-    Ti = eltype(SparseArrays.getcolptr(Si))
-    if Ti <: PureKLU.KLUITypes
-        return eltype(Si) === T ? copy(Si) : SparseMatrixCSC{T, Ti}(Si)
-    else
-        return SparseMatrixCSC{T, Int}(Si)
-    end
-end
+_own_sparse(::Type{T}, S::SparseArrays.AbstractSparseMatrix) where {T} = SparseMatrixCSC{T, Int}(S)
 
 # Z ← S⁻¹U  (reuses Sfact's current numeric factorization).
 function _recompute_Z!(F::SparseWithDenseRowColWoodbury)
@@ -141,10 +135,10 @@ end
     copyto!(F.ywork, b)
     PureKLU.solve!(F.Sfact, F.ywork)          # ywork = S⁻¹b
     if F.r > 0
-        mul!(F.tr, F.V, F.ywork)              # tr = V S⁻¹b
-        ldiv!(F.Cfact, F.tr)                  # tr = C⁻¹ V S⁻¹b
+        mul!(F.rwork, F.V, F.ywork)           # rwork = V S⁻¹b
+        ldiv!(F.Cfact, F.rwork)               # rwork = C⁻¹ V S⁻¹b
         copyto!(b, F.ywork)
-        mul!(b, F.Z, F.tr, -one(T), one(T))   # b = S⁻¹b - Z C⁻¹ V S⁻¹b
+        mul!(b, F.Z, F.rwork, -one(T), one(T)) # b = S⁻¹b - Z C⁻¹ V S⁻¹b
     else
         copyto!(b, F.ywork)
     end
@@ -155,8 +149,8 @@ end
 function _applyA!(F::SparseWithDenseRowColWoodbury{T}, res::AbstractVector, x::AbstractVector) where {T}
     mul!(res, F.Sown, x)
     if F.r > 0
-        mul!(F.tr, F.V, x)
-        mul!(res, F.U, F.tr, one(T), one(T))
+        mul!(F.rwork, F.V, x)
+        mul!(res, F.U, F.rwork, one(T), one(T))
     end
     return res
 end
@@ -195,18 +189,11 @@ LinearAlgebra.ldiv!(Y::AbstractMatrix, F::SparseWithDenseRowColWoodbury, B::Abst
 # ------------------
 # Adjoint / transpose solve  (Aᴴ = Sᴴ + Vᴴ Uᴴ):  A⁻ᴴ b = S⁻ᴴ(b − Vᴴ C⁻ᴴ Zᴴ b)
 # ------------------
-# `F'` / `transpose(F)` on a Factorization wrap it in Adjoint/TransposeFactorization (newer
-# Julia) or Adjoint/Transpose (older). `\` for those wrappers is provided generically by
-# LinearAlgebra and routes to the `ldiv!` methods below.
-
-const AdjointFact =
-    isdefined(LinearAlgebra, :AdjointFactorization) ? LinearAlgebra.AdjointFactorization : LinearAlgebra.Adjoint
-const TransposeFact =
-    isdefined(LinearAlgebra, :TransposeFactorization) ? LinearAlgebra.TransposeFactorization : LinearAlgebra.Transpose
-
+# `F'` / `transpose(F)` use package-local wrappers so the solve interface remains stable
+# across LinearAlgebra versions without relying on its private wrapper types.
 for (Wrap, op, klu_adj) in (
-        (AdjointFact, :adjoint, :(F.Sfact')),
-        (TransposeFact, :transpose, :(transpose(F.Sfact))),
+        (_AdjointFactorization, :adjoint, :(F.Sfact')),
+        (_TransposeFactorization, :transpose, :(transpose(F.Sfact))),
     )
     @eval function LinearAlgebra.ldiv!(
             Fw::$Wrap{<:Any, <:SparseWithDenseRowColWoodbury{T}}, b::AbstractVector
@@ -214,9 +201,9 @@ for (Wrap, op, klu_adj) in (
         F = parent(Fw)
         length(b) == size(F, 1) || throw(DimensionMismatch())
         if F.r > 0
-            mul!(F.tr, $op(F.Z), b)            # tr = Zᴴ b
-            ldiv!($op(F.Cfact), F.tr)          # tr = C⁻ᴴ tr
-            mul!(F.res, $op(F.V), F.tr)        # res = Vᴴ tr
+            mul!(F.rwork, $op(F.Z), b)         # rwork = Zᴴ b
+            ldiv!($op(F.Cfact), F.rwork)       # rwork = C⁻ᴴ rwork
+            mul!(F.res, $op(F.V), F.rwork)     # res = Vᴴ rwork
             @. F.res = b - F.res
         else
             copyto!(F.res, b)
@@ -251,9 +238,9 @@ end
 
 LinearAlgebra.ldiv!(F::SparseWithDenseRowColWoodbury{<:Real}, b::AbstractVector{<:Complex}) =
     _ldiv_realfact_complex!(F, b)
-LinearAlgebra.ldiv!(Fw::AdjointFact{<:Any, <:SparseWithDenseRowColWoodbury{<:Real}}, b::AbstractVector{<:Complex}) =
+LinearAlgebra.ldiv!(Fw::_AdjointFactorization{<:Any, <:SparseWithDenseRowColWoodbury{<:Real}}, b::AbstractVector{<:Complex}) =
     _ldiv_realfact_complex!(Fw, b)
-LinearAlgebra.ldiv!(Fw::TransposeFact{<:Any, <:SparseWithDenseRowColWoodbury{<:Real}}, b::AbstractVector{<:Complex}) =
+LinearAlgebra.ldiv!(Fw::_TransposeFactorization{<:Any, <:SparseWithDenseRowColWoodbury{<:Real}}, b::AbstractVector{<:Complex}) =
     _ldiv_realfact_complex!(Fw, b)
 
 # ------------------
@@ -262,7 +249,7 @@ LinearAlgebra.ldiv!(Fw::TransposeFact{<:Any, <:SparseWithDenseRowColWoodbury{<:R
 
 """
     refactor!(F::SparseWithDenseRowColWoodbury, A::SparseWithDenseRowColMatrix; check=true) -> F
-    refactor!(F::SparseWithDenseRowColWoodbury, S::AbstractSparseMatrixCSC; fill=nothing, check=true) -> F
+    refactor!(F::SparseWithDenseRowColWoodbury, S::AbstractSparseMatrix; fill=nothing, check=true) -> F
     refactor!(F::SparseWithDenseRowColWoodbury, Snzval::AbstractVector; fill=nothing) -> F
 
 Update the factorization `F` in place with new numeric values that share the **same
@@ -287,7 +274,7 @@ function refactor!(F::SparseWithDenseRowColWoodbury, Snzval::AbstractVector; fil
 end
 
 function refactor!(
-        F::SparseWithDenseRowColWoodbury, S::SparseArrays.AbstractSparseMatrixCSC;
+        F::SparseWithDenseRowColWoodbury, S::SparseArrays.AbstractSparseMatrix;
         fill = nothing, check::Bool = true
     )
     if check
@@ -311,10 +298,15 @@ function refactor!(F::SparseWithDenseRowColWoodbury, A::SparseWithDenseRowColMat
     return refactor!(F, A.S; fill = A.V, check)
 end
 
-function _same_pattern(A::SparseArrays.AbstractSparseMatrixCSC, B::SparseArrays.AbstractSparseMatrixCSC)
-    return size(A) == size(B) &&
-        SparseArrays.getcolptr(A) == SparseArrays.getcolptr(B) &&
-        SparseArrays.rowvals(A) == SparseArrays.rowvals(B)
+function _same_pattern(A::SparseArrays.AbstractSparseMatrix, B::SparseArrays.AbstractSparseMatrix)
+    size(A) == size(B) || return false
+    Ac, Bc = SparseMatrixCSC(A), SparseMatrixCSC(B)
+    for j in axes(Ac, 2)
+        ainds, binds = SparseArrays.nzrange(Ac, j), SparseArrays.nzrange(Bc, j)
+        length(ainds) == length(binds) || return false
+        SparseArrays.rowvals(Ac)[ainds] == SparseArrays.rowvals(Bc)[binds] || return false
+    end
+    return true
 end
 
 """

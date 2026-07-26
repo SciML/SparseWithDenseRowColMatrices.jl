@@ -8,6 +8,21 @@ using SparseColumnPivotedQR: SparseColumnPivotedQR
 
 import PrecompileTools: @setup_workload, @compile_workload
 
+struct _AdjointFactorization{T, F <: LinearAlgebra.Factorization{T}} <: LinearAlgebra.Factorization{T}
+    parent::F
+end
+_adjoint_factorization(f::F) where {T, F <: LinearAlgebra.Factorization{T}} =
+    _AdjointFactorization{T, F}(f)
+
+struct _TransposeFactorization{T, F <: LinearAlgebra.Factorization{T}} <: LinearAlgebra.Factorization{T}
+    parent::F
+end
+_transpose_factorization(f::F) where {T, F <: LinearAlgebra.Factorization{T}} =
+    _TransposeFactorization{T, F}(f)
+
+Base.parent(F::_AdjointFactorization) = F.parent
+Base.parent(F::_TransposeFactorization) = F.parent
+
 include("SelectorMatrix.jl")
 include("matrix.jl")
 include("matvec.jl")

@@ -22,8 +22,9 @@ LU of the bordered system `[S U; V -I]` of size `n + r`. Used automatically by
 correction is ill-conditioned, and selectable explicitly with `strategy = :augmented`.
 Requires only `A` (not `S`) to be nonsingular.
 """
-mutable struct SparseWithDenseRowColAugmented{T, KF} <: LinearAlgebra.Factorization{T}
+mutable struct SparseWithDenseRowColAugmented{T, KF, MP} <: LinearAlgebra.Factorization{T}
     Kaug::KF             # PureKLU.KLUFactorization of [S U; V -I]
+    Mpattern::MP         # owned sparse pattern used to validate numeric refactors
     n::Int
     r::Int
     rhs::Vector{T}       # length n+r work buffer ([b; 0] / solution)
@@ -33,6 +34,8 @@ Base.size(F::SparseWithDenseRowColAugmented) = (F.n, F.n)
 Base.size(F::SparseWithDenseRowColAugmented, i::Integer) = i ≤ 2 ? F.n : 1
 LinearAlgebra.issuccess(F::SparseWithDenseRowColAugmented) = LinearAlgebra.issuccess(F.Kaug)
 denserank(F::SparseWithDenseRowColAugmented) = F.r
+Base.adjoint(F::SparseWithDenseRowColAugmented) = _adjoint_factorization(F)
+Base.transpose(F::SparseWithDenseRowColAugmented) = _transpose_factorization(F)
 
 _sparse_block(U::AbstractMatrix{T}) where {T} = sparse(U)
 function _sparse_block(U::SelectorMatrix{T}) where {T}
@@ -62,7 +65,9 @@ function _augmented(A::SparseWithDenseRowColMatrix{T}) where {T}
     # a broken factorization whose solve would read past the truncated factor.
     Kaug = PureKLU.klu(Maug)
     LinearAlgebra.issuccess(Kaug) || throw(SingularException(0))
-    return SparseWithDenseRowColAugmented{T, typeof(Kaug)}(Kaug, n, r, Vector{T}(undef, n + r))
+    return SparseWithDenseRowColAugmented{T, typeof(Kaug), typeof(Maug)}(
+        Kaug, copy(Maug), n, r, Vector{T}(undef, n + r)
+    )
 end
 
 function LinearAlgebra.ldiv!(F::SparseWithDenseRowColAugmented{T}, b::AbstractVector) where {T}
@@ -93,7 +98,7 @@ LinearAlgebra.ldiv!(Y::AbstractMatrix, F::SparseWithDenseRowColAugmented, B::Abs
 # Adjoint / transpose solve. The transposed bordered system Mᵀ = [Sᵀ Vᵀ; Uᵀ -I] has Schur
 # complement Sᵀ + Vᵀ Uᵀ = (S + U V)ᵀ = Aᵀ (and likewise Mᴴ ↔ Aᴴ), so solving Mᵀ[x;y]=[b;0]
 # (resp. Mᴴ) with the SAME factorization's transpose/adjoint solve yields x = A⁻ᵀ b (resp. A⁻ᴴ b).
-for (Wrap, kluop) in ((AdjointFact, :(F.Kaug')), (TransposeFact, :(transpose(F.Kaug))))
+for (Wrap, kluop) in ((_AdjointFactorization, :(F.Kaug')), (_TransposeFactorization, :(transpose(F.Kaug))))
     @eval function LinearAlgebra.ldiv!(
             Fw::$Wrap{<:Any, <:SparseWithDenseRowColAugmented{T}}, b::AbstractVector
         ) where {T}
@@ -119,9 +124,9 @@ end
 # Complex RHS over a real augmented factorization (real/imag split; see woodbury.jl).
 LinearAlgebra.ldiv!(F::SparseWithDenseRowColAugmented{<:Real}, b::AbstractVector{<:Complex}) =
     _ldiv_realfact_complex!(F, b)
-LinearAlgebra.ldiv!(Fw::AdjointFact{<:Any, <:SparseWithDenseRowColAugmented{<:Real}}, b::AbstractVector{<:Complex}) =
+LinearAlgebra.ldiv!(Fw::_AdjointFactorization{<:Any, <:SparseWithDenseRowColAugmented{<:Real}}, b::AbstractVector{<:Complex}) =
     _ldiv_realfact_complex!(Fw, b)
-LinearAlgebra.ldiv!(Fw::TransposeFact{<:Any, <:SparseWithDenseRowColAugmented{<:Real}}, b::AbstractVector{<:Complex}) =
+LinearAlgebra.ldiv!(Fw::_TransposeFactorization{<:Any, <:SparseWithDenseRowColAugmented{<:Real}}, b::AbstractVector{<:Complex}) =
     _ldiv_realfact_complex!(Fw, b)
 
 """
@@ -135,22 +140,19 @@ function refactor!(F::SparseWithDenseRowColAugmented{T}, A::SparseWithDenseRowCo
     denserank(A) == F.r && size(A, 1) == F.n ||
         throw(DimensionMismatch("shape changed; rebuild with `factorize`."))
     Maug = _augmented_matrix(A)
-    if length(SparseArrays.nonzeros(Maug)) == length(F.Kaug.nzval) &&
+    if length(SparseArrays.nonzeros(Maug)) == length(SparseArrays.nonzeros(F.Mpattern)) &&
             (
             !check || (
-                SparseArrays.getcolptr(Maug) == increment(F.Kaug.colptr) &&
-                    SparseArrays.rowvals(Maug) == increment(F.Kaug.rowval)
+                _same_pattern(F.Mpattern, Maug)
             )
         )
         PureKLU.klu!(F.Kaug, SparseArrays.nonzeros(Maug))
     else
         F.Kaug = PureKLU.klu(Maug)
+        F.Mpattern = copy(Maug)
     end
     return F
 end
-
-# 1-based copy of PureKLU's internal 0-based index arrays, for the pattern check above.
-increment(v::AbstractVector{<:Integer}) = v .+ one(eltype(v))
 
 # The augmented fallback embeds U/V inside one sparse LU and keeps no separate factorization
 # of S to reuse, so the Woodbury low-rank fast path does not apply here.
