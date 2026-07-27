@@ -3,8 +3,8 @@
 # ------------------
 
 """
-    SparseWithDenseRowColMatrix(S::AbstractSparseMatrixCSC, U::AbstractMatrix, V::AbstractMatrix)
-    SparseWithDenseRowColMatrix(S::AbstractSparseMatrixCSC, fill::AbstractMatrix; replace=false)
+    SparseWithDenseRowColMatrix(S::AbstractSparseMatrix, U::AbstractMatrix, V::AbstractMatrix)
+    SparseWithDenseRowColMatrix(S::AbstractSparseMatrix, fill::AbstractMatrix; replace=false)
     SparseWithDenseRowColMatrix{T}(S, U, V)
 
 A square matrix represented as a **sparse part plus a low-rank dense correction**
@@ -52,7 +52,7 @@ julia> Matrix(A)[1, :]
 """
 struct SparseWithDenseRowColMatrix{
         T,
-        TS <: SparseArrays.AbstractSparseMatrixCSC{T},
+        TS <: SparseArrays.AbstractSparseMatrix{T},
         TU <: AbstractMatrix{T},
         TV <: AbstractMatrix{T},
     } <: AbstractMatrix{T}
@@ -79,14 +79,14 @@ _to_eltype(::Type{T}, A::AbstractMatrix) where {T} = convert(AbstractMatrix{T}, 
 _to_eltype(::Type{T}, A::SelectorMatrix) where {T} = SelectorMatrix{T}(A.n, A.r)
 
 function SparseWithDenseRowColMatrix(
-        S::SparseArrays.AbstractSparseMatrixCSC, U::AbstractMatrix, V::AbstractMatrix
+        S::SparseArrays.AbstractSparseMatrix, U::AbstractMatrix, V::AbstractMatrix
     )
     T = promote_type(eltype(S), eltype(U), eltype(V))
     return SparseWithDenseRowColMatrix{T}(S, U, V)
 end
 
 function SparseWithDenseRowColMatrix{T}(
-        S::SparseArrays.AbstractSparseMatrixCSC, U::AbstractMatrix, V::AbstractMatrix
+        S::SparseArrays.AbstractSparseMatrix, U::AbstractMatrix, V::AbstractMatrix
     ) where {T}
     Sc, Uc, Vc = _to_eltype(T, S), _to_eltype(T, U), _to_eltype(T, V)
     return SparseWithDenseRowColMatrix{T, typeof(Sc), typeof(Uc), typeof(Vc)}(Sc, Uc, Vc)
@@ -94,7 +94,7 @@ end
 
 # Boundary-condition convenience: `fill` is an r×n block in the top r rows via a selector.
 function SparseWithDenseRowColMatrix(
-        S::SparseArrays.AbstractSparseMatrixCSC, fill::AbstractMatrix; replace::Bool = false
+        S::SparseArrays.AbstractSparseMatrix, fill::AbstractMatrix; replace::Bool = false
     )
     n = size(S, 2)
     r = size(fill, 1)
@@ -182,7 +182,7 @@ Base.IndexStyle(::Type{<:SparseWithDenseRowColMatrix}) = IndexCartesian()
     return acc
 end
 
-Base.@propagate_inbounds function Base.getindex(A::SparseWithDenseRowColMatrix, i::Int, j::Int)
+@inline function Base.getindex(A::SparseWithDenseRowColMatrix, i::Int, j::Int)
     @boundscheck checkbounds(A, i, j)
     return @inbounds A.S[i, j] + _lowrank_entry(A.U, A.V, i, j)
 end
@@ -198,7 +198,7 @@ low-rank part instead, mutate `fillpart(A)` / `lowrankfactors(A)` directly.
 Note this can introduce a stored entry into `S` at `(i,j)` (as any sparse `setindex!`
 does), and on a low-rank-covered row stores the value minus the correction.
 """
-Base.@propagate_inbounds function Base.setindex!(A::SparseWithDenseRowColMatrix, v, i::Int, j::Int)
+@inline function Base.setindex!(A::SparseWithDenseRowColMatrix, v, i::Int, j::Int)
     @boundscheck checkbounds(A, i, j)
     @inbounds A.S[i, j] = v - _lowrank_entry(A.U, A.V, i, j)
     return v
@@ -235,9 +235,9 @@ _densify(U::SelectorMatrix{T}) where {T} = materialize_U!(Matrix{T}(undef, U.n, 
 # Pretty printing
 # ------------------
 
-function Base.array_summary(io::IO, A::SparseWithDenseRowColMatrix{T}, inds::Tuple{Vararg{Base.OneTo}}) where {T}
+function Base.summary(io::IO, A::SparseWithDenseRowColMatrix{T}) where {T}
     print(
-        io, Base.dims2string(length.(inds)), " SparseWithDenseRowColMatrix{$T} with ",
+        io, join(size(A), '×'), " SparseWithDenseRowColMatrix{$T} with ",
         SparseArrays.nnz(A.S), " stored entries and fill rank ", denserank(A)
     )
     return

@@ -317,6 +317,9 @@ function Base.:\(F::SparseWithDenseRowColLeastSquares{T}, b::AbstractVector) whe
     length(b) == F.n || throw(DimensionMismatch())
     return _structured_apply!(Vector{T}(undef, F.n), F, eltype(b) === T ? b : convert(Vector{T}, b))
 end
+function Base.:\(F::SparseWithDenseRowColLeastSquares{T}, b::Vector{Complex{T}}) where {T <: Union{Float32, Float64}}
+    return complex.(F \ real.(b), F \ imag.(b))
+end
 
 function _lstsq_dense(
         A::SparseWithDenseRowColMatrix, b::AbstractVector;
@@ -333,14 +336,11 @@ function _lstsq_dense(
     M = Matrix(A)
     Md = eltype(M) === TT ? copy(M) : TT.(M)
     if iszero(λ)
-        rhs = collect(TT, b)
-        x, _ = LinearAlgebra.LAPACK.gelsy!(Md, rhs, rc)
-        return x
+        return LinearAlgebra.pinv(Md; rtol = rc) * collect(TT, b)
     else
         # Tikhonov: minimize ‖A x − b‖² + λ²‖x‖² = ‖[A; λI] x − [b; 0]‖²
         stacked = vcat(Md, real(TT)(λ) * Matrix{TT}(LinearAlgebra.I, n, n))
         rhs = vcat(collect(TT, b), zeros(TT, n))
-        x, _ = LinearAlgebra.LAPACK.gelsy!(stacked, rhs, rc)
-        return x[1:n]
+        return LinearAlgebra.pinv(stacked; rtol = rc) * rhs
     end
 end

@@ -25,7 +25,7 @@ SelectorMatrix(n::Integer, r::Integer) = SelectorMatrix{Bool}(n, r)
 
 Base.size(M::SelectorMatrix) = (M.n, M.r)
 
-Base.@propagate_inbounds function Base.getindex(M::SelectorMatrix{T}, i::Int, j::Int) where {T}
+@inline function Base.getindex(M::SelectorMatrix{T}, i::Int, j::Int) where {T}
     @boundscheck checkbounds(M, i, j)
     return (i == j && j ≤ M.r) ? one(T) : zero(T)
 end

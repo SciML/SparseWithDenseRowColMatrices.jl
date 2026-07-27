@@ -81,7 +81,7 @@ function Base.show(io::IO, ::MIME"text/plain", rec::PeelRecommendation)
 end
 
 """
-    recommend_lowrank_peel(A::AbstractSparseMatrixCSC;
+    recommend_lowrank_peel(A::AbstractSparseMatrix;
                            row_factor=8.0, col_factor=8.0, maxrank=32,
                            min_n=64, abs_floor=4) -> PeelRecommendation
 
@@ -109,23 +109,27 @@ julia> rec.recommended, rec.rank
 ```
 """
 function recommend_lowrank_peel(
-        A::SparseArrays.AbstractSparseMatrixCSC;
+        A::SparseArrays.AbstractSparseMatrix;
         row_factor::Real = 8.0, col_factor::Real = 8.0,
         maxrank::Int = 32, min_n::Int = 64, abs_floor::Int = 4
     )
-    n, m = size(A)
-    nnzA = SparseArrays.nnz(A)
+    Ac = SparseMatrixCSC(A)
+    n, m = size(Ac)
+    nnzA = SparseArrays.nnz(Ac)
 
     n == m || return PeelRecommendation(false, 0, :not_square, n, nnzA, 0, 0, 0, 0, 0.0, 0.0, 0.0)
     n < min_n && return PeelRecommendation(false, 0, :too_small, n, nnzA, 0, 0, 0, 0, 0.0, 0.0, 0.0)
     nnzA == 0 && return PeelRecommendation(false, 0, :empty, n, 0, 0, 0, 0, 0, 0.0, 0.0, 0.0)
 
-    colptr = SparseArrays.getcolptr(A)
-    rows = SparseArrays.rowvals(A)
-    colcnt = diff(colptr)                         # nnz per column, O(n)
+    rows = SparseArrays.rowvals(Ac)
+    colcnt = Vector{Int}(undef, m)
     rowcnt = zeros(Int, n)
-    @inbounds for k in 1:nnzA
-        rowcnt[rows[k]] += 1
+    @inbounds for j in axes(Ac, 2)
+        inds = SparseArrays.nzrange(Ac, j)
+        colcnt[j] = length(inds)
+        for k in inds
+            rowcnt[rows[k]] += 1
+        end
     end
 
     row_thresh = max(row_factor * max(_median_int(rowcnt), 1.0), float(abs_floor))

@@ -52,6 +52,8 @@ Base.size(F::SparseWithDenseRowColQRAugmented) = (F.n, F.n)
 Base.size(F::SparseWithDenseRowColQRAugmented, i::Integer) = i ≤ 2 ? F.n : 1
 LinearAlgebra.issuccess(F::SparseWithDenseRowColQRAugmented) = F.rankaug == F.n + F.r
 denserank(F::SparseWithDenseRowColQRAugmented) = F.r
+Base.adjoint(F::SparseWithDenseRowColQRAugmented) = _adjoint_factorization(F)
+Base.transpose(F::SparseWithDenseRowColQRAugmented) = _transpose_factorization(F)
 
 # CSC of Mᴴ / Mᵀ (for the adjoint/transpose factorization), built from the owned CSC.
 _adjoint_csc(MaugC::SparseMatrixCSC{T}) where {T} = SparseMatrixCSC{T, Int}(MaugC')
@@ -112,7 +114,7 @@ end
 _augfact_tr!(F::SparseWithDenseRowColQRAugmented{<:Real}) = _augfact_adj!(F)
 _augfact_tr!(F::SparseWithDenseRowColQRAugmented) = SparseColumnPivotedQR.scpqr(_transpose_csc(F.MaugC))
 
-for (Wrap, getfact) in ((AdjointFact, :_augfact_adj!), (TransposeFact, :_augfact_tr!))
+for (Wrap, getfact) in ((_AdjointFactorization, :_augfact_adj!), (_TransposeFactorization, :_augfact_tr!))
     @eval function LinearAlgebra.ldiv!(
             Fw::$Wrap{<:Any, <:SparseWithDenseRowColQRAugmented}, b::AbstractVector
         )
@@ -131,9 +133,9 @@ end
 # Complex RHS over a real augmented-QR factorization (real/imag split; see woodbury.jl).
 LinearAlgebra.ldiv!(F::SparseWithDenseRowColQRAugmented{<:Real}, b::AbstractVector{<:Complex}) =
     _ldiv_realfact_complex!(F, b)
-LinearAlgebra.ldiv!(Fw::AdjointFact{<:Any, <:SparseWithDenseRowColQRAugmented{<:Real}}, b::AbstractVector{<:Complex}) =
+LinearAlgebra.ldiv!(Fw::_AdjointFactorization{<:Any, <:SparseWithDenseRowColQRAugmented{<:Real}}, b::AbstractVector{<:Complex}) =
     _ldiv_realfact_complex!(Fw, b)
-LinearAlgebra.ldiv!(Fw::TransposeFact{<:Any, <:SparseWithDenseRowColQRAugmented{<:Real}}, b::AbstractVector{<:Complex}) =
+LinearAlgebra.ldiv!(Fw::_TransposeFactorization{<:Any, <:SparseWithDenseRowColQRAugmented{<:Real}}, b::AbstractVector{<:Complex}) =
     _ldiv_realfact_complex!(Fw, b)
 
 """

@@ -160,12 +160,18 @@ function _adjoint_matvec!(
     return y
 end
 
-for (Wrap, Sop, cnj) in ((:Adjoint, :adjoint, :conj), (:Transpose, :transpose, :identity))
-    @eval LinearAlgebra.mul!(
-        y::AbstractVector, wA::$Wrap{<:Any, <:SparseWithDenseRowColMatrix}, u::AbstractVector,
-        α::Number, β::Number,
-    ) = _adjoint_matvec!(y, parent(wA), u, α, β, $Sop, $cnj)
-    @eval LinearAlgebra.mul!(
-        y::AbstractVector, wA::$Wrap{<:Any, <:SparseWithDenseRowColMatrix}, u::AbstractVector,
-    ) = mul!(y, wA, u, true, false)
-end
+LinearAlgebra.mul!(
+    y::AbstractVector, wA::Adjoint{<:Any, <:SparseWithDenseRowColMatrix}, u::AbstractVector,
+    α::Number, β::Number,
+) = _adjoint_matvec!(y, parent(wA), u, α, β, adjoint, conj)
+LinearAlgebra.mul!(
+    y::AbstractVector, wA::Adjoint{<:Any, <:SparseWithDenseRowColMatrix}, u::AbstractVector,
+) = mul!(y, wA, u, true, false)
+
+LinearAlgebra.mul!(
+    y::AbstractVector, wA::Transpose{<:Any, <:SparseWithDenseRowColMatrix}, u::AbstractVector,
+    α::Number, β::Number,
+) = _adjoint_matvec!(y, parent(wA), u, α, β, transpose, identity)
+LinearAlgebra.mul!(
+    y::AbstractVector, wA::Transpose{<:Any, <:SparseWithDenseRowColMatrix}, u::AbstractVector,
+) = mul!(y, wA, u, true, false)
