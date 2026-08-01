@@ -2,7 +2,7 @@ module SparseWithDenseRowColMatricesIterativeSolversExt
 
 using SparseWithDenseRowColMatrices
 using SparseWithDenseRowColMatrices: SparseWithDenseRowColMatrix, _check_lstsq_eltype
-using IterativeSolvers
+using IterativeSolvers: IterativeSolvers
 using LinearAlgebra: LinearAlgebra
 
 # Iterative engine for `lstsq(A, b; alg=:iterative)`. LSQR (default) / LSMR are driven entirely
