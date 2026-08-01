@@ -1,11 +1,10 @@
 module SparseWithDenseRowColMatricesLinearSolveExt
 
 using SparseWithDenseRowColMatrices
-using SparseWithDenseRowColMatrices: SparseWithDenseRowColMatrix, SparseWithDenseRowColWoodbury,
-    SparseWithDenseRowColAugmented, SparseWithDenseRowColQRAugmented, denserank, refactor!,
-    SparseWithDenseRowColFactorization, SparseWithDenseRowColQRFactorization
-using LinearSolve
-using LinearSolve: LinearCache, OperatorAssumptions, LinearVerbosity, AbstractSparseFactorization
+using SparseWithDenseRowColMatrices: SparseWithDenseRowColMatrix,
+    SparseWithDenseRowColQRAugmented, denserank, refactor!
+using LinearSolve: LinearSolve, LinearCache, OperatorAssumptions, LinearVerbosity,
+    AbstractSparseFactorization
 using LinearAlgebra: LinearAlgebra, ldiv!, issuccess, Factorization, SingularException, factorize, qr
 
 # LinearSolve `@reexport using SciMLBase`, so SciMLBase is reachable through it.
