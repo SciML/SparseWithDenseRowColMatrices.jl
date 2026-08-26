@@ -20,7 +20,7 @@ SparseWithDenseRowColMatricesLinearSolveExt = "LinearSolve"
 
 [compat]
 Aqua = "0.8"
-ForwardDiff = "0.10, 1"
+ForwardDiff = "1"
 IterativeSolvers = "0.9"
 LinearAlgebra = "1"
 LinearSolve = "5.1"
